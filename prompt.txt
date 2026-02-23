@@ -1,0 +1,68 @@
+ => ERROR [8/8] RUN npm run build                                                                                                                                                                    12.7s 
+------
+ > [8/8] RUN npm run build:
+2.742
+2.742 > ra-polymers-backend@0.0.1 build
+2.742 > nest build
+2.742
+11.80 Found 9 error(s).
+11.80
+11.80 src/modules/auth/auth.module.ts:4:32 - error TS2307: Cannot find module '@nestjs/passport' or its corresponding type declarations.
+11.80
+11.80 4 import { PassportModule } from '@nestjs/passport';
+11.80                                  ~~~~~~~~~~~~~~~~~~
+11.80 src/modules/auth/auth.module.ts:5:27 - error TS2307: Cannot find module '@nestjs/jwt' or its corresponding type declarations.
+11.80
+11.80 5 import { JwtModule } from '@nestjs/jwt';
+11.80                             ~~~~~~~~~~~~~
+11.80 src/modules/auth/auth.service.ts:3:28 - error TS2307: Cannot find module '@nestjs/jwt' or its corresponding type declarations.
+11.80
+11.80 3 import { JwtService } from '@nestjs/jwt';
+11.80                              ~~~~~~~~~~~~~
+11.80 src/modules/auth/jwt.strategy.ts:1:38 - error TS2307: Cannot find module 'passport-jwt' or its corresponding type declarations.
+11.80
+11.80 1 import { ExtractJwt, Strategy } from 'passport-jwt';
+11.80                                        ~~~~~~~~~~~~~~
+11.80 src/modules/auth/jwt.strategy.ts:2:34 - error TS2307: Cannot find module '@nestjs/passport' or its corresponding type declarations.
+11.80
+11.80 2 import { PassportStrategy } from '@nestjs/passport';
+11.80                                    ~~~~~~~~~~~~~~~~~~
+11.80 src/modules/requisitions/requisitions.service.ts:17:39 - error TS2353: Object literal may only specify known properties, and 'company' does not exist in type 'QuoteInclude<DefaultArgs>'.
+11.80
+11.80 17       include: { quotes: { include: { company: true } } },
+11.80                                          ~~~~~~~
+11.80 src/modules/requisitions/requisitions.service.ts:90:42 - error TS2339: Property 'company' does not exist on type 'PrismaService'.
+11.80
+11.80 90       const supplier = await this.prisma.company.findUnique({ where: { id: q.companyId } });
+11.80                                             ~~~~~~~
+11.80 src/modules/requisitions/requisitions.service.ts:138:39 - error TS2353: Object literal may only specify known properties, and 'company' does not exist in type 'QuoteInclude<DefaultArgs>'.
+11.80
+11.80 138       include: { quotes: { include: { company: true } } }
+11.80                                           ~~~~~~~
+11.80 src/modules/users/users.service.ts:3:25 - error TS2307: Cannot find module 'bcrypt' or its corresponding type declarations.
+11.80
+11.80 3 import * as bcrypt from 'bcrypt';
+11.80                           ~~~~~~~~
+11.80 
+------
+Dockerfile:24
+
+--------------------
+
+  22 |
+
+  23 |     # Compila o código para JavaScript
+
+  24 | >>> RUN npm run build
+
+  25 |
+
+  26 |     # Expõe a porta 3000
+
+--------------------
+
+failed to solve: process "/bin/sh -c npm run build" did not complete successfully: exit code: 1
+
+
+
+View build details: docker-desktop://dashboard/build/default/default/ugpdxb6792jrqd3c4vu4gnopr

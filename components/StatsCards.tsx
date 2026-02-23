@@ -2,8 +2,8 @@
 import React, { useState, useMemo } from 'react';
 import { Requisition } from '../types';
 import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, 
-  AreaChart, Area
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
+  BarChart, Bar
 } from 'recharts';
 import { 
   TrendingUp, DollarSign, 
@@ -21,14 +21,13 @@ export const StatsCards: React.FC<StatsCardsProps> = ({ requisitions }) => {
 
   const filteredData = useMemo(() => {
     return requisitions.filter(r => {
-      // Comparação de strings ISO (YYYY-MM-DD) funciona corretamente
       if (startDate && r.requestDate < startDate) return false;
       if (endDate && r.requestDate > endDate) return false;
       return true;
     });
   }, [requisitions, startDate, endDate]);
 
-  // CÁLCULOS FINANCEIROS CORRIGIDOS (Saving = Oferta Vencedora - Preço Final)
+  // CÁLCULOS FINANCEIROS CORRIGIDOS
   const completedItems = filteredData.filter(r => r.status === 'Comprado' || r.status === 'Entregue');
   
   const totalCost = completedItems.reduce((acc, curr) => {
@@ -40,14 +39,15 @@ export const StatsCards: React.FC<StatsCardsProps> = ({ requisitions }) => {
     // Busca a cotação vencedora para usar como base (Preço Inicial)
     const winningQuote = curr.quotes?.find(q => q.isSelected);
     
-    if (winningQuote && curr.finalCost) {
-      const initialPrice = winningQuote.price;
-      const finalPrice = curr.finalCost;
-      
-      // Saving de Negociação: Diferença entre o primeiro preço ofertado e o fechado
-      const diffUnit = Math.max(0, initialPrice - finalPrice); // Apenas saving positivo
-      const itemSaving = Math.round(diffUnit * curr.quantity * 100) / 100;
-      return acc + itemSaving;
+    // Se não tiver vencedora marcada, tenta pegar o maior preço das cotações como referência de "preço evitado" ou ignora
+    // Mas o ideal é ter a vencedora. Vamos assumir que se está comprado, existe uma logica de preço inicial vs final.
+    if (curr.finalCost) {
+       const initialPrice = winningQuote ? winningQuote.price : curr.finalCost; // Fallback para não gerar saving falso se não achar a quote
+       const finalPrice = curr.finalCost;
+       
+       const diffUnit = Math.max(0, initialPrice - finalPrice);
+       const itemSaving = Math.round(diffUnit * curr.quantity * 100) / 100;
+       return acc + itemSaving;
     }
     return acc;
   }, 0);
@@ -82,16 +82,19 @@ export const StatsCards: React.FC<StatsCardsProps> = ({ requisitions }) => {
     return { name: maxName, value: maxVal };
   }, [completedItems]);
 
-  // Dados para o Gráfico de Área (Evolução Diária)
+  // Dados para o Gráfico de Barras (Evolução Diária)
   const timelineData = useMemo(() => {
     const map = filteredData.reduce((acc: any, curr) => {
       const date = curr.requestDate;
+      if(!date) return acc; // Ignora itens sem data
+      
       if (!acc[date]) acc[date] = { date, saving: 0, gasto: 0 };
       
       const winningQuote = curr.quotes?.find(q => q.isSelected);
       
-      if (curr.finalCost && winningQuote && (curr.status === 'Comprado' || curr.status === 'Entregue')) {
-        const diffUnit = Math.max(0, winningQuote.price - curr.finalCost);
+      if (curr.finalCost && (curr.status === 'Comprado' || curr.status === 'Entregue')) {
+        const initialPrice = winningQuote ? winningQuote.price : curr.finalCost;
+        const diffUnit = Math.max(0, initialPrice - curr.finalCost);
         const itemSaving = Math.round(diffUnit * curr.quantity * 100) / 100;
         
         acc[date].saving += itemSaving;
@@ -235,30 +238,29 @@ export const StatsCards: React.FC<StatsCardsProps> = ({ requisitions }) => {
                   <p className="text-xs text-slate-400 font-bold uppercase tracking-wider mt-1">Saving acumulado por data de solicitação</p>
                 </div>
               </div>
-              <div className="h-80 w-full">
+              <div className="h-80 w-full min-h-[320px] relative" style={{ height: 320, width: '100%' }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={timelineData}>
-                    <defs>
-                      <linearGradient id="colorSaving" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.1}/>
-                        <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
+                  <BarChart data={timelineData}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                     <XAxis 
                       dataKey="date" 
                       axisLine={false} 
                       tickLine={false} 
                       tick={{fontSize: 10, fill: '#94a3b8'}} 
-                      tickFormatter={(str) => new Date(str + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
+                      tickFormatter={(str) => {
+                          if (!str) return '-';
+                          const d = new Date(str + 'T00:00:00');
+                          return isNaN(d.getTime()) ? '-' : d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+                      }}
                     />
                     <YAxis hide />
                     <Tooltip 
+                      cursor={{fill: '#f8fafc'}}
                       contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'}}
                       formatter={(val: number) => [formatCurrency(val), 'Saving']}
                     />
-                    <Area type="monotone" dataKey="saving" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorSaving)" />
-                  </AreaChart>
+                    <Bar dataKey="saving" fill="#10b981" radius={[4, 4, 0, 0]} barSize={40} />
+                  </BarChart>
                 </ResponsiveContainer>
               </div>
            </div>

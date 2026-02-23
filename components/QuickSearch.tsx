@@ -8,6 +8,7 @@ interface QuickSearchProps {
 
 export const QuickSearch: React.FC<QuickSearchProps> = ({ requisitions }) => {
   const [searchTerm, setSearchTerm] = useState('');
+  const [displayLimit, setDisplayLimit] = useState(5);
 
   const results = useMemo(() => {
     if (!searchTerm || searchTerm.length < 2) return [];
@@ -21,13 +22,22 @@ export const QuickSearch: React.FC<QuickSearchProps> = ({ requisitions }) => {
     }).sort((a, b) => new Date(b.requestDate).getTime() - new Date(a.requestDate).getTime());
   }, [requisitions, searchTerm]);
 
+  // Reset limit on new search
+  useMemo(() => setDisplayLimit(5), [searchTerm]);
+
+  const displayedResults = results.slice(0, displayLimit);
+
   const formatCurrency = (val: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
-  const formatDate = (dateStr: string) => new Date(dateStr + 'T00:00:00').toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' });
+  const formatDate = (dateStr: string) => {
+    const d = new Date(dateStr + 'T00:00:00');
+    return isNaN(d.getTime()) ? '-' : d.toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' });
+  };
 
   return (
     <div className="flex flex-col h-full animate-in fade-in duration-500">
       
       <div className="bg-white p-8 rounded-[2.5rem] shadow-soft border border-slate-50 mb-8 text-center relative overflow-hidden">
+        {/* ... (header remains same) ... */}
         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 via-indigo-500 to-emerald-500"></div>
         
         <div className="max-w-2xl mx-auto relative z-10">
@@ -52,14 +62,14 @@ export const QuickSearch: React.FC<QuickSearchProps> = ({ requisitions }) => {
       </div>
 
       {searchTerm.length >= 2 ? (
-        <div className="flex-1">
-          {results.length > 0 ? (
-            <div className="grid grid-cols-1 gap-6 pb-12">
+        <div className="flex-1 pb-12">
+          {displayedResults.length > 0 ? (
+            <div className="flex flex-col gap-6">
               <p className="px-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                Encontrados {results.length} registros históricos
+                Exibindo {displayedResults.length} de {results.length} registros encontrados
               </p>
               
-              {results.map((req) => (
+              {displayedResults.map((req) => (
                 <div key={req.id} className="bg-white rounded-[2rem] p-6 shadow-soft border border-slate-50 hover:shadow-lg transition-all group">
                   <div className="flex flex-col md:flex-row gap-6">
                     
@@ -124,6 +134,15 @@ export const QuickSearch: React.FC<QuickSearchProps> = ({ requisitions }) => {
                   </div>
                 </div>
               ))}
+
+              {results.length > displayLimit && (
+                <button 
+                  onClick={() => setDisplayLimit(prev => prev + 5)}
+                  className="w-full py-4 bg-slate-100 text-slate-500 font-bold uppercase tracking-widest rounded-2xl hover:bg-blue-50 hover:text-blue-600 transition-colors"
+                >
+                  Carregar mais resultados ({results.length - displayLimit} restantes)
+                </button>
+              )}
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center h-64 text-slate-400 opacity-50">

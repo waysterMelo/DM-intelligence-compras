@@ -1,0 +1,115 @@
+// Prisma Schema - Banco de Dados da RA Polymers (Versão Fiscal)
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Modelo de Empresas (Compradora e Fornecedores)
+model Fornecedor {
+  id          String   @id @default(uuid())
+  name        String   // Nome/Razão Social
+  cnpj        String   @unique // CNPJ Único
+  taxRegime   String   // SIMPLES | PRESUMIDO | REAL
+  companyRole String   // SUPPLIER | BUYER
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  
+  // Relacionamento: Uma empresa pode dar várias cotações
+  quotes      Quote[]
+  
+  // Relacionamento: Funcionários vinculados
+  users       User[]
+
+  @@map("fornecedores")
+}
+
+// Modelo de Usuários do Sistema
+model User {
+  id        String   @id @default(uuid())
+  name      String
+  username  String   @unique
+  password  String
+  role      String   // Cargo (Comprador, Gerente, etc)
+  
+  fornecedorId String
+  fornecedor   Fornecedor  @relation(fields: [fornecedorId], references: [id])
+  
+  createdAt DateTime @default(now())
+}
+
+// Modelo da Requisição de Compra
+model Requisition {
+  id            String   @id @default(uuid())
+  name          String   
+  quantity      Float    
+  unit          String   
+  estimatedCost Float?   
+  finalCost     Float?   
+  paymentTerms  String?  
+  requestDate   DateTime @default(now())
+  deliveryDate  DateTime? 
+  status        String   
+  department    String   
+  priority      String   
+  requester     String   
+  notes         String?  
+  
+  quotes        Quote[]
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// Modelo de Cotação de Fornecedor (Enriquecido para TCO Fiscal)
+model Quote {
+  id           String      @id @default(uuid())
+  supplierName String      // Nome legível do fornecedor
+  price        Float       // Preço Unitário Bruto (Preço de Tabela)
+  freight      Float?      @default(0)
+  leadTime     Int?        @default(0)
+  paymentTerms String?     
+  isSelected   Boolean     @default(false)
+
+  // --- CAMPOS FISCAIS (FASE 1) ---
+  itemUseType  String?     // RESALE | INDUSTRIAL_INPUT | CONSUMPTION | FIXED_ASSET
+  
+  // ICMS
+  cstIcms      String?     // CST do ICMS
+  csosn        String?     // CSOSN (para Simples Nacional)
+  hasIcmsSt    Boolean     @default(false)
+  icmsRate     Float?      @default(0)
+  icmsValue    Float?      @default(0)
+  
+  // PIS/COFINS
+  cstPis       String?
+  cstCofins    String?
+  pisRate      Float?      @default(0)
+  cofinsRate   Float?      @default(0)
+  pisValue     Float?      @default(0)
+  cofinsValue  Float?      @default(0)
+  
+  // IPI
+  ipiRate      Float?      @default(0)
+  ipiValue     Float?      @default(0)
+
+  // RESULTADOS DO CÁLCULO (Motor Fiscal)
+  creditIcms   Float?      @default(0)
+  creditPis    Float?      @default(0)
+  creditCofins Float?      @default(0)
+  netCost      Float?      @default(0) // Custo Líquido Real (TCO - Créditos)
+  creditSource String?     @default("MANUAL")
+  taxMemory    Json?       // Auditoria: Armazena o "porquê" do cálculo em JSON
+
+  // Relacionamentos
+  fornecedorId  String?    // Link para a empresa cadastrada
+  fornecedor    Fornecedor?   @relation(fields: [fornecedorId], references: [id])
+  
+  requisitionId String
+  requisition   Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+}

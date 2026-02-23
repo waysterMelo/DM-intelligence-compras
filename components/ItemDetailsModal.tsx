@@ -13,31 +13,33 @@ export const ItemDetailsModal: React.FC<ItemDetailsModalProps> = ({ data, onClos
   if (!data) return null;
 
   const formatCurrency = (val: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
-  const formatDate = (dateStr: string) => new Date(dateStr + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
+  const formatDate = (dateStr: string | null | undefined) => {
+    if (!dateStr) return '---';
+    const date = new Date(dateStr);
+    return isNaN(date.getTime()) ? 'Data Inválida' : date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
+  };
 
   // Estado do Item
-  const isFinalized = data.finalCost !== null && data.finalCost !== undefined;
+  const isFinalized = data.finalCost !== null && data.finalCost !== undefined && data.finalCost > 0;
   const finalUnit = data.finalCost || 0;
   
   // Dados de Cotação
   const winningQuote = data.quotes?.find(q => q.isSelected);
-  // Se não tem cotação vencedora, assume o preço final como base (sem saving)
-  const initialUnit = winningQuote ? winningQuote.price : (isFinalized ? finalUnit : 0);
+  // Se não tem cotação vencedora explícita, tenta pegar a de menor preço para comparação ou usa o finalUnit
+  const benchmarkPrice = winningQuote ? winningQuote.price : (data.quotes && data.quotes.length > 0 ? Math.min(...data.quotes.map(q => q.price)) : finalUnit);
   
   // Cálculos de Saving (Apenas se finalizado)
-  const diffUnit = Math.round((initialUnit - finalUnit) * 100) / 100;
-  const totalSaving = Math.round(diffUnit * data.quantity * 100) / 100;
-  const totalFinal = Math.round(finalUnit * data.quantity * 100) / 100;
+  // Saving = (Preço de Referência - Preço Pago) * Quantidade
+  const diffUnit = Math.max(0, benchmarkPrice - finalUnit);
+  const totalSaving = diffUnit * data.quantity;
+  const totalFinal = finalUnit * data.quantity;
   
   const hasSaving = totalSaving > 0;
-  const isNegative = totalSaving < 0;
-  
-  // % de Saving
-  const savingPercent = initialUnit > 0 ? ((diffUnit / initialUnit) * 100).toFixed(1) : '0';
+  const savingPercent = benchmarkPrice > 0 ? ((diffUnit / benchmarkPrice) * 100).toFixed(1) : '0';
 
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/60 backdrop-blur-md p-4 animate-in fade-in duration-300">
-      <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-2xl border border-white overflow-hidden relative flex flex-col max-h-[90vh]">
+      <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-5xl border border-white overflow-hidden relative flex flex-col max-h-[90vh]">
         
         <div className="p-10 pb-6 border-b border-slate-50 flex justify-between items-start bg-slate-50/30">
           <div>
@@ -76,13 +78,13 @@ export const ItemDetailsModal: React.FC<ItemDetailsModalProps> = ({ data, onClos
                 
                 <div className="grid grid-cols-2 gap-8 relative z-10 border-b border-white/10 pb-6 mb-6">
                    <div>
-                      <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1">Oferta Inicial (Vencedor)</p>
-                      <p className="text-xl font-bold">{winningQuote ? formatCurrency(winningQuote.price) : '---'}</p>
+                      <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1">Oferta Inicial (Referência)</p>
+                      <p className="text-xl font-bold">{formatCurrency(benchmarkPrice)}</p>
                    </div>
                    <div className="text-right">
-                      <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1">Preço Fechado</p>
+                      <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-1">Preço Fechado Unitário</p>
                       <p className="text-xl font-black text-blue-400">
-                        {isFinalized ? formatCurrency(finalUnit) : 'Em Aberto'}
+                        {isFinalized ? formatCurrency(finalUnit) : 'Em Negociação'}
                       </p>
                    </div>
                 </div>
@@ -95,22 +97,22 @@ export const ItemDetailsModal: React.FC<ItemDetailsModalProps> = ({ data, onClos
                       </p>
                    </div>
                    <div className="text-right">
-                      <p className={`text-[10px] font-bold uppercase tracking-widest mb-1 ${!isFinalized ? 'text-slate-500' : hasSaving ? 'text-emerald-400' : isNegative ? 'text-rose-400' : 'text-slate-400'}`}>
-                        {isFinalized ? (hasSaving ? 'Saving Gerado' : isNegative ? 'Acréscimo' : 'Diferença') : 'Status'}
+                      <p className={`text-[10px] font-bold uppercase tracking-widest mb-1 ${hasSaving ? 'text-emerald-400' : 'text-slate-400'}`}>
+                        Saving Total
                       </p>
-                      <p className={`text-4xl font-black ${!isFinalized ? 'text-slate-600' : hasSaving ? 'text-emerald-400' : isNegative ? 'text-rose-400' : 'text-slate-500'}`}>
-                         {isFinalized ? formatCurrency(Math.abs(totalSaving)) : '---'}
+                      <p className={`text-4xl font-black ${hasSaving ? 'text-emerald-400' : 'text-slate-500'}`}>
+                         {isFinalized ? formatCurrency(totalSaving) : '---'}
                       </p>
                    </div>
                 </div>
 
-                {isFinalized && (hasSaving || isNegative) && (
+                {isFinalized && hasSaving && (
                    <div className="mt-4 p-3 bg-white/5 rounded-xl border border-white/10">
                      <div className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
                         <Calculator className="w-3 h-3" /> Memória de Cálculo
                      </div>
                      <p className="text-xs text-slate-300 font-mono">
-                        ({formatCurrency(initialUnit)} - {formatCurrency(finalUnit)}) × {data.quantity} {data.unit} = {formatCurrency(totalSaving)}
+                        ({formatCurrency(benchmarkPrice)} - {formatCurrency(finalUnit)}) × {data.quantity} {data.unit} = {formatCurrency(totalSaving)}
                      </p>
                    </div>
                 )}
@@ -127,42 +129,48 @@ export const ItemDetailsModal: React.FC<ItemDetailsModalProps> = ({ data, onClos
              </div>
           </div>
 
-          {winningQuote && (
-             <div className="mb-10 bg-blue-50/50 p-6 rounded-[2rem] border border-blue-100 flex items-center gap-5">
-                <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center shadow-sm text-blue-600">
-                   <Store className="w-8 h-8" />
-                </div>
-                <div className="flex-1">
-                   <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1">Fornecedor Selecionado</p>
-                   <p className="text-xl font-black text-slate-900">{winningQuote.supplierName}</p>
-                   <p className="text-xs font-bold text-slate-500 mt-0.5">Venceu a concorrência com oferta inicial de {formatCurrency(winningQuote.price)}</p>
-                </div>
-             </div>
-          )}
-
           <div className="mb-10">
-            <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 ml-2">Histórico da Concorrência</h3>
-            <div className="bg-white border border-slate-100 rounded-[2rem] overflow-hidden">
+            <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 ml-2">Detalhamento Técnico e Fiscal</h3>
+            <div className="bg-white border border-slate-100 rounded-[2rem] overflow-hidden overflow-x-auto">
               {data.quotes && data.quotes.length > 0 ? (
-                <table className="w-full">
+                <table className="w-full min-w-[600px]">
                   <thead className="bg-slate-50/50">
                     <tr>
                       <th className="px-6 py-4 text-left text-[10px] font-black text-slate-400 uppercase">Fornecedor</th>
-                      <th className="px-6 py-4 text-right text-[10px] font-black text-slate-400 uppercase">Preço Inicial</th>
+                      <th className="px-4 py-4 text-right text-[10px] font-black text-slate-400 uppercase">Preço Unit.</th>
+                      <th className="px-4 py-4 text-right text-[10px] font-black text-amber-500 uppercase">IPI (%)</th>
+                      <th className="px-4 py-4 text-right text-[10px] font-black text-amber-500 uppercase">ICMS (%)</th>
+                      <th className="px-4 py-4 text-right text-[10px] font-black text-amber-500 uppercase">PIS/COFINS</th>
+                      <th className="px-6 py-4 text-right text-[10px] font-black text-emerald-600 uppercase">Preço Líquido</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
                     {data.quotes.map((quote, idx) => {
                       const isWinner = quote.isSelected;
+                      const netPrice = quote.price - (quote.creditIcms || 0) - (quote.creditPis || 0) - (quote.creditCofins || 0); // Aproximação simples se netCost não vier preenchido
+                      const displayNet = quote.netCost || netPrice;
+
                       return (
                         <tr key={idx} className={isWinner ? 'bg-blue-50/30' : ''}>
                           <td className="px-6 py-4">
                             <span className={`text-sm font-bold ${isWinner ? 'text-blue-700' : 'text-slate-600'}`}>
-                              {quote.supplierName} {isWinner && '🏆'}
+                              {quote.supplierName || 'Fornecedor Desconhecido'} {isWinner && '🏆'}
                             </span>
                           </td>
-                          <td className="px-6 py-4 text-right text-sm font-black text-slate-700">
+                          <td className="px-4 py-4 text-right text-sm font-black text-slate-700">
                             {formatCurrency(quote.price)}
+                          </td>
+                           <td className="px-4 py-4 text-right text-xs font-bold text-slate-500">
+                            {quote.ipiRate ? `${quote.ipiRate}%` : '-'}
+                          </td>
+                          <td className="px-4 py-4 text-right text-xs font-bold text-slate-500">
+                            {quote.icmsRate ? `${quote.icmsRate}%` : '-'}
+                          </td>
+                          <td className="px-4 py-4 text-right text-xs font-bold text-slate-500">
+                            {(quote.pisRate || 0) + (quote.cofinsRate || 0) > 0 ? `${((quote.pisRate||0) + (quote.cofinsRate||0)).toFixed(2)}%` : '-'}
+                          </td>
+                          <td className="px-6 py-4 text-right text-sm font-black text-emerald-600">
+                            {formatCurrency(displayNet)}
                           </td>
                         </tr>
                       )

@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  # Serviço do Banco de Dados PostgreSQL
+  db:
+    image: postgres:15-alpine
+    container_name: ra-polymers-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ra_user
+      POSTGRES_PASSWORD: ra_password
+      POSTGRES_DB: ra_procurement
+    ports:
+      - "5432:5432" # Expõe a porta padrão do Postgres na sua máquina
+    volumes:
+      - postgres_data:/var/lib/postgresql/data # Mantém os dados salvos mesmo após parar o Docker
+
+  # Serviço do seu Backend NestJS
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ra-polymers-api
+    restart: always
+    ports:
+      - "3000:3000" # Porta que seu Frontend (React) acessará
+    environment:
+      # URL que conecta o Backend ao Banco de Dados dentro do Docker
+      DATABASE_URL: "postgresql://ra_user:ra_password@db:5432/ra_procurement?schema=public"
+    depends_on:
+      - db # O backend só liga após o banco estar pronto
+
+# Volume nomeado para não perder os dados do banco
+volumes:
+  postgres_data:
