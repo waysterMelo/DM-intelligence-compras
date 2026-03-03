@@ -27,4 +27,4 @@ RUN npm run build
 EXPOSE 3000
 
 # Comando para iniciar
-CMD ["npm", "run", "start:prod"]
+CMD ["npm", "run", "start:prod:migrate"]

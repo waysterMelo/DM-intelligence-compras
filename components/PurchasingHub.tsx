@@ -92,9 +92,13 @@ export const PurchasingHub: React.FC<PurchasingHubProps> = ({ requisitions, onUp
     setLocalQuotes(prev => {
       const newQuotes = [...(prev[reqId] || [])];
       newQuotes[idx] = { ...newQuotes[idx], [field]: value };
-      if (field === 'companyId') {
-        const selected = suppliers.find(s => s.id === value);
-        if (selected) newQuotes[idx].supplierName = selected.name;
+      
+      // Persistência imediata para campos críticos (Selects)
+      if (field === 'companyId' || field === 'itemUseType') {
+        if (field === 'companyId') {
+          const selected = suppliers.find(s => s.id === value);
+          if (selected) newQuotes[idx].supplierName = selected.name;
+        }
         persistChanges(reqId, newQuotes);
       }
       return { ...prev, [reqId]: newQuotes };
