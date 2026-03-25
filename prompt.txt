@@ -1,43 +1,124 @@
-Contexto:
-Atuas como um Engenheiro de Software Sénior e Especialista em Regras Fiscais a trabalhar no sistema "DM Intelligence" (stack: React + NestJS). Realizámos uma auditoria ao Motor Fiscal (TCO) e identificámos 3 falhas graves de arquitetura fiscal no cálculo de impostos que precisam de ser corrigidas imediatamente.
+📋 Instrução Técnica — Correção de Bugs Fiscais
+Projeto: DM-intelligence-compras
+Arquivo: components/TcoManager.tsx
+Função: calculateFiscalResult()
+Prioridade: Alta — bugs causam cálculo incorreto de créditos tributários
 
-Conforme as minhas diretrizes estritas: Nunca omitas nada na tua resposta. Escreve o código completo e refatorado para as alterações solicitadas em cada ficheiro.
+Bug 1 🔴 — Fornecedor Simples Nacional gerando crédito de ICMS indevido
+Problema: A verificação de regime do fornecedor existe para PIS/COFINS mas foi omitida para ICMS. Empresas do Simples Nacional não destacam ICMS na NF (LC 123/2006, art. 23), portanto o comprador não pode se creditar.
 
-Objetivo:
-Corrigir a lógica de cálculo de créditos fiscais (ICMS, IPI, PIS, COFINS) no Backend e sincronizar a mesma lógica nas pré-visualizações do Frontend para garantir que o sistema não induz o utilizador em erro.
+Localizar este bloco no código:
 
-Regras Fiscais Corretas (A implementar):
+typescript
+// ❌ REMOVER / SUBSTITUIR ESTE BLOCO:
+if (isInputOrResale) {
+  if (buyer?.taxRegime === 'REAL' || buyer?.taxRegime === 'PRESUMIDO') {
+    creditIcms = icms;
+  }
+}
+Substituir por:
 
-Regra de Ouro (Uso e Consumo): Se itemUseType === 'CONSUMPTION', nenhum crédito é gerado (retorna 0 para todos os impostos), independentemente de qualquer regime.
+typescript
+// ✅ NOVO BLOCO CORRETO:
+if (isInputOrResale) {
+  if (buyer?.taxRegime === 'REAL' || buyer?.taxRegime === 'PRESUMIDO') {
+    const supplier = suppliers.find(s => s.id === quote.companyId);
+    if (supplier?.taxRegime !== 'SIMPLES') {
+      creditIcms = icms;
+    }
+    // Se fornecedor for Simples: creditIcms permanece 0
+  }
+}
+Bug 2 🟡 — Ativo Imobilizado recebendo crédito de ICMS integral (deveria ser 1/48)
+Problema: FIXED_ASSET está agrupado com insumos em isInputOrResale, recebendo crédito total no mês. Pela LC 87/1996, art. 20 §5°, o crédito de ativo imobilizado é apropriado em 48 parcelas mensais (controlado no livro CIAP).
 
-ICMS: Compradores de Lucro REAL e PRESUMIDO têm direito a crédito de ICMS se o item for INDUSTRIAL_INPUT ou RESALE. (Atualmente o sistema está a bloquear o ICMS para o Presumido).
+Localizar esta linha:
 
-PIS/COFINS: Apenas compradores de Lucro REAL têm direito. Trava Crítica: Se o comprador for REAL mas o fornecedor for SIMPLES, o crédito de PIS/COFINS tem de ser 0.
+typescript
+// ❌ LINHA ERRADA — FIXED_ASSET não deve estar aqui:
+const isInputOrResale = ['INDUSTRIAL_INPUT', 'RESALE', 'FIXED_ASSET'].includes(quote.itemUseType || 'INDUSTRIAL_INPUT');
+Substituir toda a lógica por:
 
-IPI: Apenas gera crédito se o comprador for Indústria (não SIMPLES) e o item for INDUSTRIAL_INPUT.
+typescript
+// ✅ SEPARAR insumo/revenda de ativo imobilizado:
+const isInput = ['INDUSTRIAL_INPUT', 'RESALE'].includes(quote.itemUseType || '');
+const isFixedAsset = quote.itemUseType === 'FIXED_ASSET';
 
-Passos de Execução Obrigatórios:
+// Crédito ICMS — Insumo/Revenda: imediato
+if (isInput) {
+  if (buyer?.taxRegime === 'REAL' || buyer?.taxRegime === 'PRESUMIDO') {
+    const supplier = suppliers.find(s => s.id === quote.companyId);
+    if (supplier?.taxRegime !== 'SIMPLES') {
+      creditIcms = icms;
+    }
+  }
+}
 
-1. Backend - Refatorar o Motor Fiscal (backend/src/modules/tax-engine/tax-credit.service.ts):
+// Crédito ICMS — Ativo Imobilizado: 1/48 por mês (LC 87/96 art. 20 §5°)
+if (isFixedAsset) {
+  if (buyer?.taxRegime === 'REAL' || buyer?.taxRegime === 'PRESUMIDO') {
+    const supplier = suppliers.find(s => s.id === quote.companyId);
+    if (supplier?.taxRegime !== 'SIMPLES') {
+      creditIcms = icms / 48;
+    }
+  }
+}
+⚠️ Atenção: Atualizar também a variável isInputOrResale nos blocos de PIS/COFINS e IPI abaixo — substituir por isInput onde aplicável.
 
-Remove a atribuição de crédito de ICMS de dentro da verificação if (buyerRegime === 'REAL'). O ICMS deve estar acessível também para o PRESUMIDO.
+Bug 3 🟡 — Crédito de IPI não verifica regime do fornecedor
+Problema: O crédito de IPI verifica apenas o regime do comprador, mas ignora se o fornecedor é Simples Nacional. Fornecedores do Simples não destacam IPI na NF, então o crédito não existe.
 
-Adiciona a trava do Fornecedor Simples Nacional: Se supplierRegime === 'SIMPLES', então creditPis = 0 e creditCofins = 0.
+Localizar este bloco:
 
-Retorna um array de alerts sempre que um imposto for zerado devido ao regime (ex: "Créditos de PIS/COFINS anulados: Fornecedor Simples Nacional").
+typescript
+// ❌ REMOVER / SUBSTITUIR ESTE BLOCO:
+if (buyer?.taxRegime !== 'SIMPLES' && quote.itemUseType === 'INDUSTRIAL_INPUT') {
+  creditIpi = ipi;
+}
+Substituir por:
 
-2. Frontend - Refatorar Simulação no TcoManager.tsx (components/TcoManager.tsx):
+typescript
+// ✅ NOVO BLOCO CORRETO:
+const supplierForIpi = suppliers.find(s => s.id === quote.companyId);
+if (
+  buyer?.taxRegime !== 'SIMPLES' &&
+  supplierForIpi?.taxRegime !== 'SIMPLES' &&
+  quote.itemUseType === 'INDUSTRIAL_INPUT'
+) {
+  creditIpi = ipi;
+}
+Bug 4 🟢 — Memória de cálculo desatualizada (melhoria de UX)
+Problema: O painel de memória de cálculo exibe mensagem genérica que não reflete as novas regras. Atualizar o texto no showTaxMemory para:
 
-Atualiza a lógica visual para espelhar rigorosamente o Backend.
+typescript
+// ✅ SUBSTITUIR o conteúdo do parágrafo na memória de cálculo:
+<p className="text-[11px] leading-relaxed font-medium">
+  {buyer?.taxRegime === 'PRESUMIDO'
+    ? '✅ Lucro Presumido: Crédito de ICMS permitido (LC 87/96). PIS/COFINS cumulativos — sem crédito de entrada.'
+    : buyer?.taxRegime === 'REAL'
+    ? '✅ Lucro Real: Crédito de ICMS + PIS/COFINS permitidos (Leis 10.637/02 e 10.833/03).'
+    : '❌ Simples Nacional: Sem aproveitamento de crédito.'}
+  {(() => {
+    const sup = suppliers.find(s => s.id === quote.companyId);
+    return sup?.taxRegime === 'SIMPLES'
+      ? ' ⚠️ Fornecedor Simples Nacional — ICMS e IPI não destacados na NF, crédito vedado (LC 123/06 art. 23).'
+      : ' ✅ Fornecedor não é Simples — créditos aplicáveis.';
+  })()}
+  {quote.itemUseType === 'FIXED_ASSET'
+    ? ` 📋 Ativo Imobilizado: crédito ICMS de 1/48 por mês = ${formatCurrency(creditIcms)} (total em 48 meses = ${formatCurrency(creditIcms * 48)}).`
+    : ''}
+  <br/><br/>
+  Base ICMS: {formatCurrency(quote.price || 0)} x {quote.icmsRate}% = {formatCurrency(fiscal.credits.icms)}
+</p>
+Checklist de Validação Após Corrigir
+Antes de fazer o commit, testar os seguintes cenários:
 
-Garante que a interface não exibe simulações de crédito de PIS/COFINS se o fornecedor selecionado for do SIMPLES ou se o comprador for PRESUMIDO.
+ Fornecedor Simples Nacional → crédito de ICMS e IPI deve ser R$ 0,00
 
-3. Frontend - Refatorar Resumos no PurchasingHub.tsx e QuoteList.tsx:
+ Fornecedor Lucro Real/Presumido + item INDUSTRIAL_INPUT → crédito de ICMS e IPI calculados normalmente
 
-Localiza as funções calculateTco ou calculatePreview nestes ficheiros.
+ Item FIXED_ASSET com fornecedor não-Simples → crédito ICMS = valor total ÷ 48
 
-Substitui a lógica falha (if (buyer?.taxRegime === 'REAL') credits += icms + pis + cofins;) pela lógica completa descrita nas "Regras Fiscais Corretas" acima. Avalia o itemUseType, supplierTaxRegime e separa os impostos adequadamente.
+ Item CONSUMPTION → todos os créditos zerados, independente do fornecedor
 
-Gera os blocos de código completos e refatorados para o tax-credit.service.ts, TcoManager.tsx, PurchasingHub.tsx e QuoteList.tsx.
-
-Após analisares este plano, diz-me se tens alguma dúvida sobre as regras de negócio e aguarda o meu "OK" antes de começares a gerar o código.
+ Comprador Presumido → PIS/COFINS sempre R$ 0,00

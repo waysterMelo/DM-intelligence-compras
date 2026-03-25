@@ -97,17 +97,32 @@ export const TcoManager: React.FC<TcoManagerProps> = ({ requisition, onSave, onC
     let creditCofins = 0;
     let creditIpi = 0;
 
-    const isInputOrResale = ['INDUSTRIAL_INPUT', 'RESALE', 'FIXED_ASSET'].includes(quote.itemUseType || 'INDUSTRIAL_INPUT');
+    // ✅ SEPARAR insumo/revenda de ativo imobilizado:
+    const isInput = ['INDUSTRIAL_INPUT', 'RESALE'].includes(quote.itemUseType || '');
+    const isFixedAsset = quote.itemUseType === 'FIXED_ASSET';
 
-    // Regra ICMS: Crédito se for Insumo/Revenda para Lucro Real ou Presumido
-    if (isInputOrResale) {
-       if (buyer?.taxRegime === 'REAL' || buyer?.taxRegime === 'PRESUMIDO') {
+    // Crédito ICMS — Insumo/Revenda: imediato
+    if (isInput) {
+      if (buyer?.taxRegime === 'REAL' || buyer?.taxRegime === 'PRESUMIDO') {
+        const supplier = suppliers.find(s => s.id === quote.companyId);
+        if (supplier?.taxRegime !== 'SIMPLES') {
           creditIcms = icms;
-       }
+        }
+      }
+    }
+
+    // Crédito ICMS — Ativo Imobilizado: 1/48 por mês (LC 87/96 art. 20 §5°)
+    if (isFixedAsset) {
+      if (buyer?.taxRegime === 'REAL' || buyer?.taxRegime === 'PRESUMIDO') {
+        const supplier = suppliers.find(s => s.id === quote.companyId);
+        if (supplier?.taxRegime !== 'SIMPLES') {
+          creditIcms = icms / 48;
+        }
+      }
     }
 
     // Regra PIS/COFINS: Só se Buyer for LUCRO REAL e Fornecedor NÃO for Simples
-    if (buyer?.taxRegime === 'REAL' && isInputOrResale) {
+    if (buyer?.taxRegime === 'REAL' && isInput) {
       const supplier = suppliers.find(s => s.id === quote.companyId);
       if (supplier?.taxRegime !== 'SIMPLES') {
          creditPis = pis;
@@ -116,7 +131,12 @@ export const TcoManager: React.FC<TcoManagerProps> = ({ requisition, onSave, onC
     }
 
     // Regra IPI: Se for Insumo Industrial e Comprador for Indústria (Real/Presumido)
-    if (buyer?.taxRegime !== 'SIMPLES' && quote.itemUseType === 'INDUSTRIAL_INPUT') {
+    const supplierForIpi = suppliers.find(s => s.id === quote.companyId);
+    if (
+      buyer?.taxRegime !== 'SIMPLES' &&
+      supplierForIpi?.taxRegime !== 'SIMPLES' &&
+      quote.itemUseType === 'INDUSTRIAL_INPUT'
+    ) {
       creditIpi = ipi;
     }
 
@@ -298,8 +318,20 @@ export const TcoManager: React.FC<TcoManagerProps> = ({ requisition, onSave, onC
                            <button onClick={() => setShowTaxMemory(null)}><X className="w-4 h-4" /></button>
                          </div>
                          <p className="text-[11px] leading-relaxed font-medium">
-                           {buyer?.taxRegime === 'REAL' ? '✅ Comprador é Lucro Real. ' : '⚠️ Comprador não é Real (Sem crédito PIS/COFINS). '}
-                           {['INDUSTRIAL_INPUT', 'RESALE'].includes(quote.itemUseType || '') ? '✅ Item gera crédito de entrada. ' : '⚠️ Uso do item não permite crédito. '}
+                           {buyer?.taxRegime === 'PRESUMIDO'
+                             ? '✅ Lucro Presumido: Crédito de ICMS permitido (LC 87/96). PIS/COFINS cumulativos — sem crédito de entrada.'
+                             : buyer?.taxRegime === 'REAL'
+                             ? '✅ Lucro Real: Crédito de ICMS + PIS/COFINS permitidos (Leis 10.637/02 e 10.833/03).'
+                             : '❌ Simples Nacional: Sem aproveitamento de crédito.'}
+                           {(() => {
+                             const sup = suppliers.find(s => s.id === quote.companyId);
+                             return sup?.taxRegime === 'SIMPLES'
+                               ? ' ⚠️ Fornecedor Simples Nacional — ICMS e IPI não destacados na NF, crédito vedado (LC 123/06 art. 23).'
+                               : ' ✅ Fornecedor não é Simples — créditos aplicáveis.';
+                           })()}
+                           {quote.itemUseType === 'FIXED_ASSET'
+                             ? ` 📋 Ativo Imobilizado: crédito ICMS de 1/48 por mês = ${formatCurrency(fiscal.credits.icms)} (total em 48 meses = ${formatCurrency(fiscal.credits.icms * 48)}).`
+                             : ''}
                            <br/><br/>
                            Base ICMS: {formatCurrency(quote.price || 0)} x {quote.icmsRate}% = {formatCurrency(fiscal.credits.icms)}
                          </p>
