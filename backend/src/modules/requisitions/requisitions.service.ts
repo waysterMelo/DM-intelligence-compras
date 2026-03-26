@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma.service';
 import { TaxCreditService, TaxContext } from '../tax-engine/tax-credit.service';
 import { CompaniesService } from '../companies/companies.service';
+import { ItemUseType } from '@prisma/client';
 
 @Injectable()
 export class RequisitionsService {
@@ -76,14 +77,32 @@ export class RequisitionsService {
     // 2. Apaga as cotações existentes desta requisição
     await this.prisma.quote.deleteMany({ where: { requisitionId: id } });
 
-    // 3. Processa cada cotação usando o Motor de Créditos
+    // 3. Atualiza o itemUseType da requisição se vier em alguma cotação (sincronização)
+    if (quotes.length > 0 && quotes[0].itemUseType) {
+      await this.prisma.requisition.update({
+        where: { id },
+        data: { itemUseType: quotes[0].itemUseType as ItemUseType }
+      });
+    }
+
+    // 4. Processa cada cotação usando o Motor de Créditos
     const processedQuotes = await Promise.all(quotes.map(async (q) => {
+      const currentItemUseType = q.itemUseType || requisition.itemUseType || 'INDUSTRIAL_INPUT';
+
       if (!q.companyId) {
         return {
           supplierName: q.supplierName || 'Fornecedor avulso',
           price: q.price || 0,
           freight: q.freight || 0,
-          isSelected: q.isSelected
+          leadTime: q.leadTime || 0,
+          paymentTerms: q.paymentTerms || '',
+          isSelected: q.isSelected,
+          itemUseType: currentItemUseType as ItemUseType,
+          ipiRate: q.ipiRate || 0,
+          icmsRate: q.icmsRate || 0,
+          pisRate: q.pisRate || 0,
+          cofinsRate: q.cofinsRate || 0,
+          netCost: (q.price || 0) + ((q.freight || 0) / (requisition.quantity || 1)) + ((q.price || 0) * ((q.ipiRate || 0) / 100))
         };
       }
 
@@ -94,7 +113,7 @@ export class RequisitionsService {
         buyerRegime: buyer.taxRegime,
         supplierRegime: supplier.taxRegime,
         // Usa o tipo definido na cotação se houver, senão usa o da requisição, senão padrão
-        itemUseType: q.itemUseType || requisition.itemUseType || 'INDUSTRIAL_INPUT',
+        itemUseType: currentItemUseType,
         price: q.price || 0,
         quantity: requisition.quantity || 1,
         freight: q.freight || 0,
@@ -113,7 +132,7 @@ export class RequisitionsService {
         freight: q.freight || 0,
         leadTime: q.leadTime || 0,
         paymentTerms: q.paymentTerms || '',
-        itemUseType: taxCtx.itemUseType, // Persiste o tipo usado no cálculo
+        itemUseType: taxCtx.itemUseType as ItemUseType, // Persiste o tipo usado no cálculo
         ipiRate: q.ipiRate || 0,
         icmsRate: q.icmsRate || 0,
         pisRate: q.pisRate || 0,
@@ -128,7 +147,7 @@ export class RequisitionsService {
       };
     }));
 
-    // 4. Salva no banco
+    // 5. Salva no banco
     return this.prisma.requisition.update({
       where: { id },
       data: {

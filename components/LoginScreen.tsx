@@ -51,6 +51,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
     fetchCompanies();
   }, []);
 
+  useEffect(() => {
+    if (isRegistering && step === 2 && companies.length === 0) {
+      setIsNewCompany(true);
+    }
+  }, [isRegistering, step, companies.length]);
+
   const fetchCompanies = async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/companies`);
@@ -102,19 +108,39 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
                 if (!newCompanyName || !newCompanyCnpj) {
                     throw new Error('Informe o nome e o CNPJ da nova empresa.');
                 }
+
+                const normalizedCnpj = newCompanyCnpj.replace(/\D/g, '');
+                if (normalizedCnpj.length !== 14) {
+                    throw new Error('CNPJ inválido. Informe 14 dígitos.');
+                }
                 
                 const compRes = await fetch(`${API_BASE_URL}/companies`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         name: newCompanyName,
-                        cnpj: newCompanyCnpj,
+                        cnpj: normalizedCnpj,
                         taxRegime: newCompanyRegime,
                         companyRole: 'BUYER'
                     })
                 });
 
-                if (!compRes.ok) throw new Error('Erro ao criar empresa. Verifique se o CNPJ já existe.');
+                if (!compRes.ok) {
+                    let errorMessage = 'Erro ao criar empresa.';
+                    try {
+                        const errData = await compRes.json();
+                        if (Array.isArray(errData?.message)) {
+                            errorMessage = errData.message.join(', ');
+                        } else if (typeof errData?.message === 'string') {
+                            errorMessage = errData.message;
+                        } else if (typeof errData?.error === 'string') {
+                            errorMessage = errData.error;
+                        }
+                    } catch {
+                        // Ignora erro de parsing e mantém mensagem padrão.
+                    }
+                    throw new Error(errorMessage);
+                }
                 companyObj = await compRes.json();
                 companyId = companyObj!.id;
             } else {
@@ -361,7 +387,13 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
               </form>
 
               <div className="mt-6 text-center">
-                <button onClick={() => { setIsRegistering(!isRegistering); setStep(1); setError(''); }} className="text-xs font-medium text-blue-400 hover:text-blue-300 transition-colors">
+                <button onClick={() => {
+                  const nextIsRegistering = !isRegistering;
+                  setIsRegistering(nextIsRegistering);
+                  setStep(1);
+                  setError('');
+                  setIsNewCompany(nextIsRegistering ? companies.length === 0 : false);
+                }} className="text-xs font-medium text-blue-400 hover:text-blue-300 transition-colors">
                   {isRegistering ? 'Já possui acesso? Entrar' : 'Não tem conta? Solicitar Acesso'}
                 </button>
               </div>

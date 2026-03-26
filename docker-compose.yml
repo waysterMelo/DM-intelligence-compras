@@ -30,6 +30,20 @@ services:
     depends_on:
       - db # O backend só liga após o banco estar pronto
 
+  # Serviço do Frontend React/Vite
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ra-polymers-frontend
+    restart: always
+    ports:
+      - "5173:5173" # Porta que você acessará no navegador
+    environment:
+      - VITE_API_BASE_URL=http://localhost:3000
+    depends_on:
+      - backend # O frontend só liga após o backend estar pronto
+
 # Volume nomeado para não perder os dados do banco
 volumes:
   postgres_data:

@@ -1,5 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma.service';
+import { Prisma } from '@prisma/client';
 
 // O CompaniesService é responsável pela gestão de Fornecedores e da Compradora (RA Polymers)
 // É aqui que guardamos o "DNA Fiscal" de cada parceiro de negócio
@@ -15,12 +16,30 @@ export class CompaniesService {
     taxRegime: string; 
     companyRole: string 
   }) {
-    return this.prisma.fornecedor.create({
-      data: {
-        ...data,
-        isActive: true
+    const normalizedCnpj = data.cnpj?.replace(/\D/g, '');
+    if (!normalizedCnpj || normalizedCnpj.length !== 14) {
+      throw new BadRequestException('CNPJ inválido. Informe 14 dígitos.');
+    }
+
+    try {
+      return await this.prisma.fornecedor.create({
+        data: {
+          ...data,
+          cnpj: normalizedCnpj,
+          taxRegime: data.taxRegime?.toUpperCase(),
+          companyRole: data.companyRole?.toUpperCase(),
+          isActive: true
+        }
+      });
+    } catch (error: unknown) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException('CNPJ já cadastrado.');
       }
-    });
+      throw error;
+    }
   }
 
   // Lista todas as empresas cadastradas
