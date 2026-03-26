@@ -1,129 +1,32 @@
-<<<<<<< HEAD
-📋 Instrução Técnica — Correção de Bugs Fiscais
-Projeto: DM-intelligence-compras
-Arquivo: components/TcoManager.tsx
-Função: calculateFiscalResult()
-Prioridade: Alta — bugs causam cálculo incorreto de créditos tributários
+📋 Instruções de Continuação - Resumo do Status (Projeto DM-intelligence-compras)
 
-Bug 1 🔴 — Fornecedor Simples Nacional gerando crédito de ICMS indevido
-Problema: A verificação de regime do fornecedor existe para PIS/COFINS mas foi omitida para ICMS. Empresas do Simples Nacional não destacam ICMS na NF (LC 123/2006, art. 23), portanto o comprador não pode se creditar.
+A equipe deve dar continuidade às tarefas que ficaram pendentes ou incompletas na sessão anterior. 
+Abaixo está o resumo do que já foi feito e o que precisa ser feito a seguir.
 
-Localizar este bloco no código:
+✅ O QUE JÁ FOI CONCLUÍDO NA SESSÃO ANTERIOR:
+1. types.ts atualizado com o campo `creditIpi` na interface `SupplierQuote`.
+2. StatsCards.tsx: A lógica matemática do Bug #1 (Cálculo de Saving Real) foi implementada com sucesso.
+3. StatsCards.tsx: A lógica para a Tarefa #2 (Novos Cards Fiscais - ICMS, IPI, Perda Simples e %) já foi codificada no corpo do componente.
+4. Dependências da Tarefa #4 instaladas: `jspdf` e `html2canvas`. A função `exportPDF` já foi adicionada no `StatsCards.tsx`.
 
-typescript
-// ❌ REMOVER / SUBSTITUIR ESTE BLOCO:
-if (isInputOrResale) {
-  if (buyer?.taxRegime === 'REAL' || buyer?.taxRegime === 'PRESUMIDO') {
-    creditIcms = icms;
-  }
-}
-Substituir por:
+⚠️ O QUE PRECISA SER FEITO (PRÓXIMOS PASSOS):
 
-typescript
-// ✅ NOVO BLOCO CORRETO:
-if (isInputOrResale) {
-  if (buyer?.taxRegime === 'REAL' || buyer?.taxRegime === 'PRESUMIDO') {
-    const supplier = suppliers.find(s => s.id === quote.companyId);
-    if (supplier?.taxRegime !== 'SIMPLES') {
-      creditIcms = icms;
-    }
-    // Se fornecedor for Simples: creditIcms permanece 0
-  }
-}
-Bug 2 🟡 — Ativo Imobilizado recebendo crédito de ICMS integral (deveria ser 1/48)
-Problema: FIXED_ASSET está agrupado com insumos em isInputOrResale, recebendo crédito total no mês. Pela LC 87/1996, art. 20 §5°, o crédito de ativo imobilizado é apropriado em 48 parcelas mensais (controlado no livro CIAP).
+➡️ PASSO 1: Finalizar a UI do StatsCards.tsx (Tarefas #2 e #4)
+A injeção do JSX foi interrompida. É necessário modificar o return do `components/StatsCards.tsx` para:
+- Adicionar o atributo `id="dashboard-content"` na div raiz para permitir o print do PDF.
+- Adicionar o botão "Exportar PDF" no cabeçalho, chamando a função `exportPDF`.
+- Inserir no layout os 4 novos cards fiscais cujas variáveis já estão prontas (`totalCreditIcms`, `totalCreditIpi`, `totalSimplesLoss`, `fiscalCreditPercentage`).
 
-Localizar esta linha:
+➡️ PASSO 2: Criar o Relatório "Mapa de Cotações" (Tarefa #3)
+- Criar o arquivo `components/QuotationReport.tsx`.
+- O componente deve listar:
+  a) Ranking de Fornecedores por Volume Vencido.
+  b) Taxa de Aproveitamento de Crédito por Fornecedor (quantas vezes gerou vs não gerou crédito).
+  c) Cotações Onde o Menor Preço Não Foi o Vencedor.
+- O componente deve incluir os mesmos filtros de Data e Departamento existentes no Dashboard.
+- O componente também deve incluir o botão de exportação em PDF (Tarefa #4).
 
-typescript
-// ❌ LINHA ERRADA — FIXED_ASSET não deve estar aqui:
-const isInputOrResale = ['INDUSTRIAL_INPUT', 'RESALE', 'FIXED_ASSET'].includes(quote.itemUseType || 'INDUSTRIAL_INPUT');
-Substituir toda a lógica por:
+➡️ PASSO 3: Atualizar Roteamento / Menu Lateral
+- Modificar o `App.tsx` e o `components/Sidebar.tsx` para adicionar um novo item no menu chamado "Mapa de Cotações", permitindo a navegação para o componente `QuotationReport` criado no Passo 2.
 
-typescript
-// ✅ SEPARAR insumo/revenda de ativo imobilizado:
-const isInput = ['INDUSTRIAL_INPUT', 'RESALE'].includes(quote.itemUseType || '');
-const isFixedAsset = quote.itemUseType === 'FIXED_ASSET';
-
-// Crédito ICMS — Insumo/Revenda: imediato
-if (isInput) {
-  if (buyer?.taxRegime === 'REAL' || buyer?.taxRegime === 'PRESUMIDO') {
-    const supplier = suppliers.find(s => s.id === quote.companyId);
-    if (supplier?.taxRegime !== 'SIMPLES') {
-      creditIcms = icms;
-    }
-  }
-}
-
-// Crédito ICMS — Ativo Imobilizado: 1/48 por mês (LC 87/96 art. 20 §5°)
-if (isFixedAsset) {
-  if (buyer?.taxRegime === 'REAL' || buyer?.taxRegime === 'PRESUMIDO') {
-    const supplier = suppliers.find(s => s.id === quote.companyId);
-    if (supplier?.taxRegime !== 'SIMPLES') {
-      creditIcms = icms / 48;
-    }
-  }
-}
-⚠️ Atenção: Atualizar também a variável isInputOrResale nos blocos de PIS/COFINS e IPI abaixo — substituir por isInput onde aplicável.
-
-Bug 3 🟡 — Crédito de IPI não verifica regime do fornecedor
-Problema: O crédito de IPI verifica apenas o regime do comprador, mas ignora se o fornecedor é Simples Nacional. Fornecedores do Simples não destacam IPI na NF, então o crédito não existe.
-
-Localizar este bloco:
-
-typescript
-// ❌ REMOVER / SUBSTITUIR ESTE BLOCO:
-if (buyer?.taxRegime !== 'SIMPLES' && quote.itemUseType === 'INDUSTRIAL_INPUT') {
-  creditIpi = ipi;
-}
-Substituir por:
-
-typescript
-// ✅ NOVO BLOCO CORRETO:
-const supplierForIpi = suppliers.find(s => s.id === quote.companyId);
-if (
-  buyer?.taxRegime !== 'SIMPLES' &&
-  supplierForIpi?.taxRegime !== 'SIMPLES' &&
-  quote.itemUseType === 'INDUSTRIAL_INPUT'
-) {
-  creditIpi = ipi;
-}
-Bug 4 🟢 — Memória de cálculo desatualizada (melhoria de UX)
-Problema: O painel de memória de cálculo exibe mensagem genérica que não reflete as novas regras. Atualizar o texto no showTaxMemory para:
-
-typescript
-// ✅ SUBSTITUIR o conteúdo do parágrafo na memória de cálculo:
-<p className="text-[11px] leading-relaxed font-medium">
-  {buyer?.taxRegime === 'PRESUMIDO'
-    ? '✅ Lucro Presumido: Crédito de ICMS permitido (LC 87/96). PIS/COFINS cumulativos — sem crédito de entrada.'
-    : buyer?.taxRegime === 'REAL'
-    ? '✅ Lucro Real: Crédito de ICMS + PIS/COFINS permitidos (Leis 10.637/02 e 10.833/03).'
-    : '❌ Simples Nacional: Sem aproveitamento de crédito.'}
-  {(() => {
-    const sup = suppliers.find(s => s.id === quote.companyId);
-    return sup?.taxRegime === 'SIMPLES'
-      ? ' ⚠️ Fornecedor Simples Nacional — ICMS e IPI não destacados na NF, crédito vedado (LC 123/06 art. 23).'
-      : ' ✅ Fornecedor não é Simples — créditos aplicáveis.';
-  })()}
-  {quote.itemUseType === 'FIXED_ASSET'
-    ? ` 📋 Ativo Imobilizado: crédito ICMS de 1/48 por mês = ${formatCurrency(creditIcms)} (total em 48 meses = ${formatCurrency(creditIcms * 48)}).`
-    : ''}
-  <br/><br/>
-  Base ICMS: {formatCurrency(quote.price || 0)} x {quote.icmsRate}% = {formatCurrency(fiscal.credits.icms)}
-</p>
-Checklist de Validação Após Corrigir
-Antes de fazer o commit, testar os seguintes cenários:
-
- Fornecedor Simples Nacional → crédito de ICMS e IPI deve ser R$ 0,00
-
- Fornecedor Lucro Real/Presumido + item INDUSTRIAL_INPUT → crédito de ICMS e IPI calculados normalmente
-
- Item FIXED_ASSET com fornecedor não-Simples → crédito ICMS = valor total ÷ 48
-
- Item CONSUMPTION → todos os créditos zerados, independente do fornecedor
-
- Comprador Presumido → PIS/COFINS sempre R$ 0,00
-=======
-ESTA TENDO UM ERRO 
-QUANDO EU CLICO EM Componentes Tributários (%) PARA PREENCHER OS DADOS DE Destinação da Mercadoria , VOLTA PARA MATERIAL DE USO E CONSUMO
->>>>>>> 28e066a938229ce55f2b906e8de8594a99413d5c
+Por favor, revisem este arquivo para continuar a implementação na próxima sessão.

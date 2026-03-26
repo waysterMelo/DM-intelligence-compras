@@ -8,8 +8,11 @@ import {
 import { 
   TrendingUp, DollarSign, 
   PiggyBank, Calendar, ArrowUpRight, XCircle,
-  Receipt, Store
+  Receipt, Store, Landmark, ShieldAlert, Percent
 } from 'lucide-react';
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
+import { Download } from 'lucide-react';
 
 interface StatsCardsProps {
   requisitions: Requisition[];
@@ -18,6 +21,26 @@ interface StatsCardsProps {
 export const StatsCards: React.FC<StatsCardsProps> = ({ requisitions }) => {
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
+
+  const exportPDF = async () => {
+    const dashboardElement = document.getElementById('dashboard-content');
+    if (!dashboardElement) return;
+
+    try {
+      const canvas = await html2canvas(dashboardElement, { scale: 2 });
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+      
+      pdf.text(`RA Polymers - Relatório de Desempenho (${startDate || 'Início'} a ${endDate || 'Hoje'})`, 10, 10);
+      pdf.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')}`, 10, 16);
+      pdf.addImage(imgData, 'PNG', 0, 20, pdfWidth, pdfHeight);
+      pdf.save('Relatorio-Compras.pdf');
+    } catch (error) {
+      console.error("Erro ao gerar PDF:", error);
+    }
+  };
 
   const filteredData = useMemo(() => {
     return requisitions.filter(r => {
@@ -36,21 +59,62 @@ export const StatsCards: React.FC<StatsCardsProps> = ({ requisitions }) => {
   }, 0);
 
   const totalSaving = completedItems.reduce((acc, curr) => {
-    // Busca a cotação vencedora para usar como base (Preço Inicial)
-    const winningQuote = curr.quotes?.find(q => q.isSelected);
+    if (!curr.quotes || curr.quotes.length <= 1) return acc;
     
-    // Se não tiver vencedora marcada, tenta pegar o maior preço das cotações como referência de "preço evitado" ou ignora
-    // Mas o ideal é ter a vencedora. Vamos assumir que se está comprado, existe uma logica de preço inicial vs final.
-    if (curr.finalCost) {
-       const initialPrice = winningQuote ? winningQuote.price : curr.finalCost; // Fallback para não gerar saving falso se não achar a quote
-       const finalPrice = curr.finalCost;
-       
-       const diffUnit = Math.max(0, initialPrice - finalPrice);
-       const itemSaving = Math.round(diffUnit * curr.quantity * 100) / 100;
-       return acc + itemSaving;
+    const winningQuote = curr.quotes.find(q => q.isSelected);
+    if (!winningQuote) return acc;
+
+    const maxPrice = Math.max(...curr.quotes.map(q => q.price));
+    if (maxPrice > winningQuote.price) {
+      const diffUnit = maxPrice - winningQuote.price;
+      const itemSaving = Math.round(diffUnit * curr.quantity * 100) / 100;
+      return acc + itemSaving;
     }
     return acc;
   }, 0);
+
+  // MÓDULO FISCAL: Novos Cálculos
+  const totalCreditIcms = completedItems.reduce((acc, curr) => {
+    const winningQuote = curr.quotes?.find(q => q.isSelected);
+    if (winningQuote && winningQuote.creditIcms) {
+      return acc + (winningQuote.creditIcms * curr.quantity);
+    }
+    return acc;
+  }, 0);
+
+  const totalCreditIpi = completedItems.reduce((acc, curr) => {
+    const winningQuote = curr.quotes?.find(q => q.isSelected);
+    if (winningQuote) {
+      const ipi = winningQuote.creditIpi || winningQuote.taxMemory?.credits?.ipi || 0;
+      return acc + (ipi * curr.quantity);
+    }
+    return acc;
+  }, 0);
+
+  const totalSimplesLoss = completedItems.reduce((acc, curr) => {
+    const winningQuote = curr.quotes?.find(q => q.isSelected);
+    // Verifica se a cotação vencedora pertence a um fornecedor SIMPLES
+    if (winningQuote && winningQuote.taxMemory?.supplierRegime === 'SIMPLES') {
+      if (winningQuote.icmsRate && winningQuote.icmsRate > 0) {
+        const potentialIcmsUnit = (winningQuote.price || 0) * (winningQuote.icmsRate / 100);
+        return acc + (potentialIcmsUnit * curr.quantity);
+      }
+    }
+    return acc;
+  }, 0);
+
+  let fiscalCreditCount = 0;
+  completedItems.forEach(curr => {
+    const winningQuote = curr.quotes?.find(q => q.isSelected);
+    if (winningQuote) {
+      const icms = winningQuote.creditIcms || 0;
+      const ipi = winningQuote.creditIpi || winningQuote.taxMemory?.credits?.ipi || 0;
+      if (icms > 0 || ipi > 0) {
+        fiscalCreditCount++;
+      }
+    }
+  });
+  const fiscalCreditPercentage = completedItems.length > 0 ? Math.round((fiscalCreditCount / completedItems.length) * 100) : 0;
 
   // ROI da área de compras (Saving / (Gasto + Saving))
   const totalAvoided = totalCost + totalSaving;

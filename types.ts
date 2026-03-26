@@ -48,6 +48,7 @@ export interface SupplierQuote {
   creditIcms?: number;
   creditPis?: number;
   creditCofins?: number;
+  creditIpi?: number;
   netCost?: number;     // Custo Líquido Real (impacto no caixa)
   creditSource?: 'NF' | 'CALCULATED' | 'MANUAL';
   taxMemory?: any;      // Memória de cálculo auditável
