@@ -24,8 +24,12 @@ model Fornecedor {
   cnpj        String   @unique // CNPJ Único
   taxRegime   String   // SIMPLES | PRESUMIDO | REAL
   companyRole String   // SUPPLIER | BUYER
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
+  isActive        Boolean  @default(true)
+  pisCofinsRegime String   @default("CUMULATIVE") // CUMULATIVE | NON_CUMULATIVE
+  isIcmsTaxpayer  Boolean  @default(true)
+  isIpiTaxpayer   Boolean  @default(false)
+  state           String   @default("SP")
+  createdAt       DateTime @default(now())
   
   // Relacionamento: Uma empresa pode dar várias cotações
   quotes      Quote[]
@@ -85,7 +89,16 @@ model Quote {
   isSelected   Boolean     @default(false)
 
   // --- CAMPOS FISCAIS (FASE 1) ---
-  itemUseType  ItemUseType @default(CONSUMPTION)
+  itemUseType   ItemUseType @default(CONSUMPTION)
+  creditNature  String      @default("OTHER") // RESALE | INSUMO | FREIGHT | ENERGY | DEPRECIATION | SERVICE | OTHER
+  ncm           String?
+  cfop          String?
+  cest          String?
+  operationType String      @default("INTERNAL") // INTERNAL | INTERSTATE
+  isMonophase   Boolean?    @default(false)
+  isZeroRate    Boolean?    @default(false)
+  isSuspended   Boolean?    @default(false)
+  isExempt      Boolean?    @default(false)
   
   // ICMS
   cstIcms      String?     // CST do ICMS
@@ -103,6 +116,7 @@ model Quote {
   cofinsValue  Float?      @default(0)
   
   // IPI
+  cstIpi       String?
   ipiRate      Float?      @default(0)
   ipiValue     Float?      @default(0)
 
@@ -120,4 +134,32 @@ model Quote {
   
   requisitionId String
   requisition   Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+
+  taxSnapshots  QuoteTaxSnapshot[]
+}
+
+// Modelo de Snapshot Fiscal Auditável
+model QuoteTaxSnapshot {
+  id                    String   @id @default(uuid())
+  quoteId               String
+  engineVersion         String
+  calculatedAt          DateTime @default(now())
+  
+  grossCostUnit         Float
+  grossCostTotal        Float
+  netCostUnit           Float
+  netCostTotal          Float
+  
+  icmsCredit            Float
+  pisCredit             Float
+  cofinsCredit          Float
+  ipiCredit             Float
+  
+  legalBasisJson        Json
+  disallowedCreditsJson Json
+  memoryJson            Json
+
+  quote                 Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  @@map("quote_tax_snapshots")
 }

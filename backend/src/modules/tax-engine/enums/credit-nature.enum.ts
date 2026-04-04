@@ -1,0 +1,9 @@
+export enum CreditNature {
+  RESALE = 'RESALE',
+  INSUMO = 'INSUMO',
+  FREIGHT = 'FREIGHT',
+  ENERGY = 'ENERGY',
+  DEPRECIATION = 'DEPRECIATION',
+  SERVICE = 'SERVICE',
+  OTHER = 'OTHER',
+}
