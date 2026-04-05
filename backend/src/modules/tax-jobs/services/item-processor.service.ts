@@ -32,18 +32,19 @@ export class ItemProcessor {
   ) {}
 
   /**
-   * Processes a single quote item.
+   * Processes a single quote item with full tenant isolation.
+   * @param tenantId — tenant do job (para validação de isolamento)
    * @returns Processing result metadata (skipped or processed)
    * @throws Error if the item failed processing (caller handles retry logic)
    */
-  async process(itemId: string, quoteId: string, buyerCompanyId: string): Promise<ItemProcessingResult> {
+  async process(itemId: string, quoteId: string, buyerCompanyId: string, tenantId: string): Promise<ItemProcessingResult> {
     // Mark item as started
     await this.repository.startItem(itemId);
 
-    // Fetch quote with relations
-    const quote = await this.repository.findQuoteForProcessing(quoteId);
+    // Fetch quote with tenant-scoped validation (ponta a ponta)
+    const quote = await this.repository.findQuoteForProcessingTenantScoped(quoteId, tenantId);
     if (!quote || !quote.fornecedorId) {
-      throw new Error(`Quote ${quoteId} or supplier not found`);
+      throw new Error(`Quote ${quoteId} not found, supplier missing, or does not belong to tenant ${tenantId}`);
     }
 
     // Build calculation DTO using the job's buyerCompanyId (deterministic, not global lookup)

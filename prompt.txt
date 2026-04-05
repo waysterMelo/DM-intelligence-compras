@@ -1,43 +1,78 @@
 Equipe,
 
-O último commit da Fase 3 foi um avanço real e corrigiu pontos importantes que estavam pendentes. O worker agora usa `buyerCompanyId` explícito, o endpoint passou a usar DTO real, a criação de job já usa o usuário autenticado em vez de confiar no body, os endpoints receberam `JwtAuthGuard` e `RolesGuard`, a configuração de batch/retry foi centralizada, o cancelamento cooperativo entrou, e a semântica de status do job melhorou com `COMPLETED_ALL_SKIPPED`.
+O commit 1b4e900 foi um avanço importante e bem alinhado com o que foi pedido na reanálise anterior. Ele melhora de forma concreta a prontidão da Fase 3 para um cenário SaaS multi-tenant.
 
-Esses pontos estão corretos e devem ser mantidos.
+O que foi melhorado corretamente
+O isolamento por tenant deu um salto real:
+o buyerCompanyId agora é validado com tenantId
+os escopos de seleção de quotes foram revisados para usar tenant
+os endpoints por id agora validam se o job pertence ao tenant do usuário autenticado
+O escopo ENGINE_VERSION melhorou:
+entrou um SemverUtil
+o adapter deixou de depender apenas de comparação lexical simples de string
+O retry foi corrigido conceitualmente:
+saiu do nível do job
+entrou no nível do item
+TaxReprocessingJobItem agora carrega retryCount e maxRetries
+O worker foi modularizado:
+TaxJobsWorker ficou mais limpo
+ItemProcessor concentra processamento e retry
+JobConcluder centraliza a conclusão
+O resumo operacional do job melhorou:
+agora o backend entrega métricas agregadas úteis para dashboard e suporte
 
-No entanto, a Fase 3 ainda não pode ser considerada fechada para padrão SaaS porque ainda faltam ajustes fundamentais de isolamento e robustez.
+Essas mudanças estão corretas e devem ser mantidas.
 
-Prioridade máxima agora: fechar multi-tenant de verdade.
+O que ainda falta para fechar a Fase 3 de verdade
+1. Fechar tenant-scoping também na execução do item
 
-1. Multi-tenant:
-   O `tenantId` não pode ser apenas um campo registrado no job. Precisamos garantir isolamento real nas queries de escopo, leitura de job por ID, cancelamento e seleção de quotes. `TENANT_ALL` deve significar “todas as quotes do tenant atual”, nunca todas as quotes do sistema. O mesmo vale para `COMPANY`, `DATE_RANGE` e `ENGINE_VERSION`: todos devem ser tenant-scoped.
+O ItemProcessor ainda usa findQuoteForProcessing(quoteId) em vez do método tenant-scoped já disponível no repositório. Isso precisa ser ajustado para que o processamento seja tenant-safe ponta a ponta, não apenas na criação do job e no escopo inicial.
 
-2. Buyer e contexto:
-   A correção com `buyerCompanyId` foi boa, mas agora precisamos validar de forma mais forte que o buyer pertence ao contexto correto do tenant e do usuário.
+Ação:
 
-3. Endpoints por ID:
-   Os endpoints `GET /:id`, `POST /:id/cancel` e `POST /:id/cancel-force` precisam validar explicitamente que o job pertence ao tenant do usuário autenticado. Não basta só proteger com guard; a autorização contextual tem que ser aplicada.
+passar tenantId do job para o ItemProcessor
+usar findQuoteForProcessingTenantScoped(quoteId, tenantId)
+2. Padronizar definitivamente o escopo ENGINE_VERSION
 
-4. Escopo ENGINE_VERSION:
-   A lógica atual por comparação de string (`gte/lte`) não é robusta para versão semântica. Precisamos mudar esse escopo para comparação exata ou implementar tratamento semântico de versão.
+O adapter já filtra com SemverUtil, o que foi ótimo. Mas o repositório ainda mantém uma rota de consulta com comparação lexical por string. Isso precisa ser unificado para evitar divergência futura de comportamento.
 
-5. Retry:
-   O retry começou bem, mas ainda está no nível do job. Isso precisa ser movido para o nível do item (`TaxReprocessingJobItem`), com contagem de tentativas por item, para que erros transitórios e definitivos sejam tratados corretamente sem distorcer os contadores do job inteiro.
+Ação:
 
-6. Worker:
-   O worker está melhor, mas ainda precisa ser limpo e modularizado. Queremos uma separação mais clara entre orquestração, processamento de item, classificação de erro, cancelamento e conclusão do job.
+remover ou refatorar a variante lexical
+manter uma única semântica oficial para comparação de engine version
+3. Revisar a modelagem multi-tenant no domínio
 
-7. Progresso e observabilidade:
-   O retorno dos jobs deve evoluir para expor melhor os números operacionais e os logs precisam dar visão clara de batch, progresso, cancelamento, retry e status final.
+O tenant já entrou em Fornecedor, e isso foi importante. Mas para um SaaS robusto de longo prazo, precisamos decidir se Quote e talvez Requisition também passarão a carregar tenantId explicitamente. Hoje o isolamento depende da relação quote -> fornecedor -> tenantId, o que funciona, mas é indireto.
 
-Nova ordem de execução:
+Ação:
 
-1. fechar multi-tenant real
-2. corrigir escopos, especialmente ENGINE_VERSION
-3. mover retry para granularidade por item
-4. limpar e modularizar o worker
-5. enriquecer progresso e observabilidade
+abrir uma task de arquitetura para decidir se o tenant será propagado para Quote e Requisition
+isso não precisa travar a próxima sprint, mas precisa entrar no backlog de hardening do modelo
+4. Limpeza final do worker e da injeção
 
-Resumo:
-O commit foi bom e melhorou a Fase 3 de forma concreta. O plano continua, mas agora a prioridade deixa de ser “fazer o job funcionar” e passa a ser “blindar o job para SaaS multi-tenant de produção”.
+O TaxJobsWorker ainda injeta PrismaService, embora a maior parte da lógica já esteja em repositório/serviços. Vale limpar isso agora que a modularização amadureceu.
 
-Sigam nessa direção no próximo commit.
+5. Preparar a próxima fase enterprise
+
+A Fase 3 está muito mais madura. O próximo movimento não deve ser mais “consertar job”, e sim evoluir para:
+
+governança operacional mais rica
+revisão especializada
+UX de auditoria e fila
+indicadores de confiança e intervenção humana
+Nova direção do plano
+
+A Fase 3 já não está mais em estágio de correção estrutural. Agora ela entra em estágio de:
+
+fechamento das últimas bordas de isolamento
+padronização de comportamento
+preparação para a próxima camada enterprise
+Próxima ordem de execução
+ajustar ItemProcessor para execução tenant-scoped
+unificar tratamento de ENGINE_VERSION
+limpar injeções e acoplamentos residuais
+abrir task de modelagem explícita de tenant em Quote/Requisition
+iniciar desenho da próxima fase enterprise
+Conclusão
+
+Esse commit foi bom e merece reconhecimento. Ele elevou a Fase 3 para um patamar muito mais próximo de prontidão SaaS. O plano continua, mas agora o foco deixa de ser “fazer funcionar” e passa a ser “blindar e preparar para escalar”.

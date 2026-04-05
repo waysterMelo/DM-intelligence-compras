@@ -304,17 +304,18 @@ export class ReprocessingRepository {
     });
   }
 
-  async getQuotesByEngineVersion(fromVersion: string | null, toVersion: string | null, tenantId: string): Promise<{ id: string; lastTaxEngineVersion: string | null }[]> {
-    const whereClause: any = { fornecedor: { tenantId } };
-    if (fromVersion || toVersion) {
-      whereClause.lastTaxEngineVersion = {};
-      if (fromVersion) whereClause.lastTaxEngineVersion.gte = fromVersion;
-      if (toVersion) whereClause.lastTaxEngineVersion.lte = toVersion;
-    } else {
-      whereClause.lastTaxEngineVersion = { not: null };
-    }
+  /**
+   * Retorna quotes com engine version setada, tenant-scoped.
+   * NÃO faz comparação por string no banco — retorna todas as versões
+   * e o filtro semântico é feito pelo caller via SemverUtil.
+   * Isso garante comportamento consistente e unificado em toda a aplicação.
+   */
+  async getQuotesWithEngineVersion(tenantId: string): Promise<{ id: string; lastTaxEngineVersion: string | null }[]> {
     return this.prisma.quote.findMany({
-      where: whereClause,
+      where: {
+        fornecedor: { tenantId },
+        lastTaxEngineVersion: { not: null }
+      },
       select: { id: true, lastTaxEngineVersion: true }
     });
   }

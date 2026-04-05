@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { PrismaService } from '../../prisma.service';
 import { ReprocessingConfig } from './config/reprocessing.config';
 import { ReprocessingRepository, PendingJobRecord, JobItemRecord } from './repositories/reprocessing.repository';
 import { ItemProcessor } from './services/item-processor.service';
@@ -27,7 +26,6 @@ export class TaxJobsWorker {
   private isProcessing = false;
 
   constructor(
-    private readonly prisma: PrismaService,
     private readonly repository: ReprocessingRepository,
     private readonly itemProcessor: ItemProcessor,
     private readonly jobConcluder: JobConcluder
@@ -166,7 +164,8 @@ export class TaxJobsWorker {
         const result = await this.itemProcessor.process(
           item.id,
           item.quoteId,
-          job.buyerCompanyId
+          job.buyerCompanyId,
+          job.tenantId
         );
 
         if (result.status === 'SKIPPED') {

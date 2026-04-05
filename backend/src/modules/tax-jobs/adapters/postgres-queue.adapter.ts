@@ -161,7 +161,7 @@ export class PostgresQueueAdapter implements ReprocessingQueuePort {
         const fromVersion = input.engineVersionFrom || input.scopePayloadJson?.fromVersion;
         const toVersion = input.engineVersionTo || input.scopePayloadJson?.toVersion;
 
-        // Get all quotes belonging to this tenant with a non-null engine version
+        // Método unificado: retorna todas as quotes com engine version do tenant
         const quotes = await this.prisma.quote.findMany({
           where: {
             fornecedor: { tenantId },
@@ -170,7 +170,7 @@ export class PostgresQueueAdapter implements ReprocessingQueuePort {
           select: { id: true, lastTaxEngineVersion: true }
         });
 
-        // Filter by semantic version comparison
+        // Filtro semântico via SemverUtil (única fonte de verdade)
         const matchedIds = quotes
           .filter(q => {
             const ver = q.lastTaxEngineVersion;
