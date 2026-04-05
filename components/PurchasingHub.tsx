@@ -148,7 +148,7 @@ export const PurchasingHub: React.FC<PurchasingHubProps> = ({ requisitions, onUp
       } catch (err: any) {
         console.error("Erro ao calcular impostos", err);
         setTaxResult(null);
-        setTaxError(err?.response?.data?.message || err?.message || "Erro de validação fiscal");
+        setTaxError(err?.message || "Erro de validação fiscal");
       } finally {
         setIsCalculatingTax(false);
       }
@@ -464,7 +464,7 @@ export const PurchasingHub: React.FC<PurchasingHubProps> = ({ requisitions, onUp
                      <div className="p-6 bg-blue-50 border border-blue-100 rounded-[2rem] flex flex-col items-center justify-center text-center shadow-inner relative overflow-hidden group">
                         <p className="text-[9px] font-black uppercase tracking-[0.2em] mb-1 text-blue-500 z-10">Saving Fiscal</p>
                         <p className="text-[8px] italic text-blue-400 opacity-80 mb-2 z-10">Soma de Créditos Validados</p>
-                        <p className="text-xl font-black text-blue-700 z-10">{formatCurrency(taxResult ? (taxResult.credits.icms + taxResult.credits.pis + taxResult.credits.cofins + taxResult.credits.ipi) * selectedReq.quantity : 0)}</p>
+                        <p className="text-xl font-black text-blue-700 z-10">{formatCurrency(taxResult ? (taxResult.credits.icms + taxResult.credits.pis + taxResult.credits.cofins + taxResult.credits.ipi) : 0)}</p>
                         <div className="absolute -bottom-10 -right-10 text-blue-200 opacity-40 group-hover:scale-110 transition-transform"><Landmark className="w-24 h-24" /></div>
                      </div>
                      <div className="p-6 bg-emerald-600 rounded-[2rem] text-white flex flex-col items-center justify-center text-center shadow-2xl relative overflow-hidden group border-b-4 border-emerald-700">
@@ -473,7 +473,7 @@ export const PurchasingHub: React.FC<PurchasingHubProps> = ({ requisitions, onUp
                         <p className="text-2xl font-black z-10">
                            {formatCurrency(
                              ((winner.price - negotiatedPrice) * selectedReq.quantity) + 
-                             (taxResult ? (taxResult.credits.icms + taxResult.credits.pis + taxResult.credits.cofins + taxResult.credits.ipi) * selectedReq.quantity : 0)
+                             (taxResult ? (taxResult.credits.icms + taxResult.credits.pis + taxResult.credits.cofins + taxResult.credits.ipi) : 0)
                            )}
                         </p>
                         <div className="absolute -bottom-6 -right-6 text-emerald-500 opacity-50 group-hover:scale-110 transition-transform"><Trophy className="w-20 h-20" /></div>

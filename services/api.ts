@@ -17,13 +17,15 @@ export async function fetchJson<T>(endpoint: string, options?: RequestInit): Pro
 
   if (!response.ok) {
     let message = 'API Error';
+    let data;
     try {
-      const errorData = await response.json();
-      message = errorData.message || message;
+      data = await response.json();
+      message = data.message || message;
     } catch {
       // Ignore
     }
-    throw new Error(`[${response.status}] ${message}`);
+    // Lança o erro com a mensagem do nestjs (que pode ser um array de string se class-validator falhar)
+    throw new Error(Array.isArray(message) ? message.join('; ') : message);
   }
 
   return response.json();
