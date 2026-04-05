@@ -36,6 +36,7 @@ enum JobStatus {
   QUEUED
   RUNNING
   COMPLETED
+  COMPLETED_ALL_SKIPPED
   PARTIAL
   FAILED
   CANCELED
@@ -226,23 +227,28 @@ model TaxRuleCatalog {
 
 model TaxReprocessingJob {
   id                String    @id @default(uuid())
-  tenantId          String?   // Para ambientes Multi-Tenant (RA Polymers)
-  requestedByUserId String    // Auditoria (Quem disparou)
-  
+  tenantId          String    // Obrigatório para isolamento Multi-Tenant
+  requestedByUserId String    // Auditoria (Quem disparou) - vindo do contexto auth
+  buyerCompanyId    String    // Comprador associado a este job (resolvido na criação)
+
   scopeType         String    // "QUOTE" | "COMPANY" | "DATE_RANGE" | "ENGINE_VERSION" | "TENANT_ALL"
   scopePayloadJson  Json      // Parâmetros do Escopo (Ex: { companyId: "xyz" })
   reason            String    // Obrigatório na criação
-  
+
   engineVersionFrom String?
   engineVersionTo   String?
-  
+
   status            JobStatus @default(QUEUED)
-  
+
   totalItems        Int       @default(0)
   processedItems    Int       @default(0)
   skippedItems      Int       @default(0)
   failedItems       Int       @default(0)
-  
+
+  cancelRequestedAt DateTime? // Para cancelamento cooperativo
+  retryCount        Int       @default(0)
+  maxRetries        Int       @default(3)
+
   createdAt         DateTime  @default(now())
   startedAt         DateTime?
   finishedAt        DateTime?

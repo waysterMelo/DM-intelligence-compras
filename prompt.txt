@@ -1,0 +1,58 @@
+Revisão da Fase 3 — Mudanças obrigatórias para o próximo commit
+
+O último commit implementou de forma real a base da Fase 3, com fila em PostgreSQL, worker em background, endpoints administrativos, uso do hash para skip inteligente e persistência por job/item. A direção está correta e a fase avançou de verdade.
+
+No entanto, ainda existem pontos que impedem considerar essa fase pronta para um cenário SaaS. O próximo commit deve corrigir obrigatoriamente os itens abaixo.
+
+1. Correção crítica do comprador (buyer)
+   O worker não pode mais resolver o comprador usando `findFirst({ companyRole: 'BUYER' })`. Isso é inseguro e incorreto para multiempresa/multitenant. O buyer precisa ser resolvido de forma determinística, por contexto da quote, por tenant ou por `buyerCompanyId` explicitamente informado e persistido no job. Esse é o ponto mais crítico a ser corrigido.
+
+2. Multi-tenant real
+   O campo `tenantId` não pode ser apenas decorativo. A criação do job, a expansão do escopo, a seleção de quotes, a resolução do buyer e o processamento do worker devem respeitar isolamento real por tenant.
+
+3. DTO real para criação de job
+   O endpoint de criação de job não deve mais usar `@Body() body: any`. Criar DTO específico com validação para:
+
+* scopeType
+* scopePayloadJson
+* reason
+* engineVersionFrom
+* engineVersionTo
+  e demais campos necessários.
+
+4. Segurança do usuário solicitante
+   `requestedByUserId` não deve ser confiado a partir do body como fonte final. O ideal é obter esse valor do contexto autenticado. Também é obrigatório adicionar autenticação/autorização adequada ao controller de jobs.
+
+5. Completar escopos pendentes
+   Implementar de fato os escopos:
+
+* DATE_RANGE
+* ENGINE_VERSION
+  Hoje eles ainda não estão concluídos no adapter.
+
+6. Parametrizar batch size
+   Remover o `take: 10` hardcoded do worker e substituir por configuração centralizada, com valor padrão seguro e override por ambiente.
+
+7. Melhorar semântica do status final do job
+   A lógica final precisa considerar melhor casos com muitos itens `SKIPPED`, para que o resumo operacional do job reflita corretamente se houve recalculo real, apenas skips ou falhas parciais.
+
+8. Melhorar cancelamento
+   Adicionar cancelamento cooperativo mais claro, idealmente com `cancelRequestedAt` e comportamento previsível para batches ainda não iniciados.
+
+9. Retry mínimo
+   Implementar política mínima de retry para erros transitórios, distinguindo falha técnica temporária de erro de negócio definitivo.
+
+10. Respeitar melhor a abstração da fila
+    A abstração `ReprocessingQueuePort` foi uma decisão correta, mas o worker ainda depende demais de Prisma diretamente. Melhorar isso para reduzir acoplamento da fila ao mecanismo atual.
+
+Critérios de aceite do próximo commit:
+
+* buyer resolvido corretamente por contexto real
+* isolamento multi-tenant aplicado
+* endpoint com DTO validado
+* endpoint protegido por autenticação/autorização
+* escopos DATE_RANGE e ENGINE_VERSION funcionando
+* batch size configurável
+* semântica operacional melhor para processados/skipped/failed
+
+Sem esses ajustes, a Fase 3 continua sendo um bom avanço técnico, mas ainda não está madura o suficiente para ser considerada pronta para SaaS.

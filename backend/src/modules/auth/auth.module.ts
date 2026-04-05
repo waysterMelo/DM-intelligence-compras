@@ -6,12 +6,14 @@ import { JwtModule } from '@nestjs/jwt';
 import { JwtStrategy } from './jwt.strategy';
 import { AuthController } from './auth.controller';
 
+const jwtSecret = process.env.JWT_SECRET || 'secretKey';
+
 @Module({
   imports: [
     UsersModule,
     PassportModule,
     JwtModule.register({
-      secret: 'secretKey', // TODO: Use env variable
+      secret: jwtSecret,
       signOptions: { expiresIn: '60m' },
     }),
   ],
