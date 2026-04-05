@@ -22,6 +22,7 @@
     "@nestjs/jwt": "^10.2.0",
     "@nestjs/passport": "^10.0.3",
     "@nestjs/platform-express": "^10.0.0",
+    "@nestjs/schedule": "^6.1.1",
     "@nestjs/throttler": "^5.1.2",
     "@prisma/client": "5.10.2",
     "bcrypt": "^5.1.1",

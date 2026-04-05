@@ -5,7 +5,8 @@ import { CompaniesModule } from './modules/companies/companies.module';
 import { UsersModule } from './modules/users/users.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { TaxEngineModule } from './modules/tax-engine/tax-engine.module';
-import { TaxGovernanceModule } from './modules/tax-governance/tax-governance.module'; // Import do Motor Fiscal
+import { TaxGovernanceModule } from './modules/tax-governance/tax-governance.module'; 
+import { TaxJobsModule } from './modules/tax-jobs/tax-jobs.module';// Import do Motor Fiscal
 
 @Module({
   imports: [
@@ -15,7 +16,8 @@ import { TaxGovernanceModule } from './modules/tax-governance/tax-governance.mod
     UsersModule, 
     AuthModule,
     TaxEngineModule,
-    TaxGovernanceModule
+    TaxGovernanceModule,
+    TaxJobsModule
   ],
   controllers: [],
   providers: [],

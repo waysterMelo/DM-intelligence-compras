@@ -32,6 +32,22 @@ enum TaxCalculationStatus {
   IN_REVIEW
 }
 
+enum JobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  PARTIAL
+  FAILED
+  CANCELED
+}
+
+enum JobItemStatus {
+  PENDING
+  PROCESSED
+  SKIPPED
+  FAILED
+}
+
 // Modelo de Empresas (Compradora e Fornecedores)
 model Fornecedor {
   id              String   @id @default(uuid())
@@ -204,4 +220,57 @@ model TaxRuleCatalog {
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+// --- REPROCESSAMENTO EM MASSA (FASE 3) ---
+
+model TaxReprocessingJob {
+  id                String    @id @default(uuid())
+  tenantId          String?   // Para ambientes Multi-Tenant (RA Polymers)
+  requestedByUserId String    // Auditoria (Quem disparou)
+  
+  scopeType         String    // "QUOTE" | "COMPANY" | "DATE_RANGE" | "ENGINE_VERSION" | "TENANT_ALL"
+  scopePayloadJson  Json      // Parâmetros do Escopo (Ex: { companyId: "xyz" })
+  reason            String    // Obrigatório na criação
+  
+  engineVersionFrom String?
+  engineVersionTo   String?
+  
+  status            JobStatus @default(QUEUED)
+  
+  totalItems        Int       @default(0)
+  processedItems    Int       @default(0)
+  skippedItems      Int       @default(0)
+  failedItems       Int       @default(0)
+  
+  createdAt         DateTime  @default(now())
+  startedAt         DateTime?
+  finishedAt        DateTime?
+
+  items             TaxReprocessingJobItem[]
+
+  @@map("tax_reprocessing_jobs")
+}
+
+model TaxReprocessingJobItem {
+  id              String         @id @default(uuid())
+  jobId           String
+  quoteId         String
+  
+  oldSnapshotId   String?
+  newSnapshotId   String?
+  
+  oldInputHash    String?
+  newInputHash    String?
+  
+  status          JobItemStatus  @default(PENDING)
+  skipReason      String?        // Ex: INPUT_HASH_UNCHANGED
+  errorMessage    String?
+  
+  startedAt       DateTime?
+  finishedAt      DateTime?
+
+  job             TaxReprocessingJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@map("tax_reprocessing_job_items")
 }
