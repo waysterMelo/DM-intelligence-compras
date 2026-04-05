@@ -25,10 +25,12 @@ export interface JobSummary {
   failedItems: number;
   cancelRequestedAt?: Date;
   retryCount: number;
+  maxRetries: number;
   createdAt: Date;
   startedAt?: Date;
   finishedAt?: Date;
   items?: any[];
+  _summary?: any; // Enriched operational data
 }
 
 export abstract class ReprocessingQueuePort {

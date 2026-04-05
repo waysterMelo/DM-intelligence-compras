@@ -1,14 +1,26 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma.service';
-import { TaxEngineService } from '../tax-engine/services/tax-engine.service';
-import { TaxHashUtil } from '../tax-engine/utils/tax-hash.util';
-import { CalculateQuoteTaxDto } from '../tax-engine/dto/calculate-quote-tax.dto';
-import { TAX_ENGINE_VERSION } from '../tax-engine/controllers/tax-engine.controller';
 import { ReprocessingConfig } from './config/reprocessing.config';
-import { ErrorClassifier } from './utils/error-classifier';
-import { ReprocessingRepository } from './repositories/reprocessing.repository';
+import { ReprocessingRepository, PendingJobRecord, JobItemRecord } from './repositories/reprocessing.repository';
+import { ItemProcessor } from './services/item-processor.service';
+import { JobConcluder } from './services/job-concluder.service';
 
+/**
+ * TaxJobsWorker — Orchestrator for the reprocessing queue.
+ *
+ * Responsibilities:
+ * 1. Poll for queued jobs
+ * 2. Lock and validate jobs
+ * 3. Delegate batch processing to ItemProcessor
+ * 4. Handle cooperative cancellation
+ * 5. Delegate job conclusion to JobConcluder
+ *
+ * Does NOT directly:
+ * - Process individual quotes (delegated to ItemProcessor)
+ * - Determine final status (delegated to JobConcluder)
+ * - Classify errors (delegated to ItemProcessor/ErrorClassifier)
+ */
 @Injectable()
 export class TaxJobsWorker {
   private readonly logger = new Logger(TaxJobsWorker.name);
@@ -16,8 +28,9 @@ export class TaxJobsWorker {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly taxEngineService: TaxEngineService,
-    private readonly repository: ReprocessingRepository
+    private readonly repository: ReprocessingRepository,
+    private readonly itemProcessor: ItemProcessor,
+    private readonly jobConcluder: JobConcluder
   ) {}
 
   @Cron(CronExpression.EVERY_5_SECONDS)
@@ -28,213 +41,161 @@ export class TaxJobsWorker {
     try {
       await this.processNextJob();
     } catch (e: any) {
-      this.logger.error(`Error in TaxJobsWorker: ${e.message}`, e.stack);
+      this.logger.error(`Worker tick error: ${e.message}`, e.stack);
     } finally {
       this.isProcessing = false;
     }
   }
 
+  // === Main Job Lifecycle ===
+
   private async processNextJob() {
-    // 1. Find next queued job
-    const job = await this.repository.findNextQueuedJob();
+    const job = await this.acquireNextJob();
     if (!job) return;
 
-    // 2. Atomic lock
-    const lockCount = await this.repository.lockJob(job.id);
-    if (lockCount === 0) return; // Another worker took it
+    this.logger.log(
+      `[Worker] Job ${job.id} acquired — tenant: ${job.tenantId}, ` +
+      `buyer: ${job.buyerCompanyId}, scope: ${job.scopeType}, items: ${job.totalItems}`
+    );
 
-    this.logger.log(`[Worker] Started processing Job ${job.id} (tenant: ${job.tenantId}, buyer: ${job.buyerCompanyId})`);
-
-    // 3. Process items in batches
     const batchSize = ReprocessingConfig.batchSize;
-    let totalProcessed = 0;
-    let totalSkipped = 0;
-    let totalFailed = 0;
+    let batchNumber = 0;
 
-    while (true) {
-      // Cooperative cancellation check
-      if (ReprocessingConfig.cooperativeCancellationEnabled) {
-        const currentStatus = await this.repository.getJobStatus(job.id);
-        if (!currentStatus || currentStatus.cancelRequestedAt) {
-          this.logger.log(`[Worker] Job ${job.id} cancelled cooperatively. Stopping processing.`);
-          // Mark remaining PENDING items as SKIPPED with CANCELLED reason
-          await this.cancelRemainingItems(job.id);
-          await this.repository.concludeJob(job.id, 'CANCELED');
+    try {
+      while (true) {
+        batchNumber++;
+
+        // Check cooperative cancellation
+        if (await this.checkCancellation(job.id)) {
+          await this.jobConcluder.concludeCancelled(job.id);
           return;
         }
-      }
 
-      // Fetch next batch
-      const items = await this.repository.findPendingJobItemsByJobId(job.id, batchSize);
-      if (items.length === 0) break; // No more items
+        // Fetch next batch of pending items
+        const items = await this.repository.findPendingJobItemsByJobId(job.id, batchSize);
+        if (items.length === 0) break; // No more items
 
-      let batchProcessed = 0;
-      let batchSkipped = 0;
-      let batchFailed = 0;
+        this.logger.log(
+          `[Worker] Job ${job.id} — Batch #${batchNumber}: processing ${items.length} items ` +
+          `(batch size: ${batchSize})`
+        );
 
-      for (const item of items) {
-        try {
-          const result = await this.processItem(item.quoteId, item.id, job.buyerCompanyId);
+        const batchResult = await this.processBatch(job, items);
 
-          if (result.status === 'SKIPPED') {
-            await this.repository.markItemSkipped(item.id, {
-              skipReason: result.skipReason!,
-              oldSnapshotId: result.oldSnapshotId,
-              oldInputHash: result.oldInputHash,
-              newInputHash: result.newHash
-            });
-            batchSkipped++;
-          } else if (result.status === 'PROCESSED') {
-            await this.repository.markItemProcessed(item.id, {
-              oldSnapshotId: result.oldSnapshotId,
-              newSnapshotId: result.newSnapshotId!,
-              oldInputHash: result.oldInputHash,
-              newInputHash: result.newHash
-            });
-            batchProcessed++;
-          }
-        } catch (e: any) {
-          const isTransient = ErrorClassifier.isTransient(e);
-          const errorMessage = e.message || 'Unknown error';
+        // Update job counters
+        await this.repository.incrementJobCounters(
+          job.id,
+          batchResult.processed,
+          batchResult.skipped,
+          batchResult.failed
+        );
 
-          if (isTransient && job.retryCount < job.maxRetries) {
-            // Transient error: mark for retry, don't fail item yet
-            this.logger.warn(
-              `[Worker] Transient error on item ${item.id} (quote: ${item.quoteId}): ${errorMessage}. Will retry.`
-            );
-            // Don't mark as failed; leave as PENDING for retry
-            // Increment job retry counter
-            await this.prisma.taxReprocessingJob.update({
-              where: { id: job.id },
-              data: { retryCount: { increment: 1 } }
-            });
-            batchFailed++; // Count toward this batch
-          } else {
-            // Definitive error or max retries exceeded
-            await this.repository.markItemFailed(item.id, errorMessage);
-            batchFailed++;
-          }
+        // Progress log
+        const currentJob = await this.repository.getJobStatus(job.id);
+        if (currentJob) {
+          const progress = currentJob.totalItems > 0
+            ? ((currentJob.processedItems + currentJob.skippedItems + currentJob.failedItems) / currentJob.totalItems * 100).toFixed(1)
+            : '0.0';
+          this.logger.log(
+            `[Worker] Job ${job.id} — Batch #${batchNumber} complete: ` +
+            `+${batchResult.processed} processed, +${batchResult.skipped} skipped, +${batchResult.failed} failed. ` +
+            `Progress: ${progress}%`
+          );
         }
       }
 
-      // Update job counters
-      await this.repository.incrementJobCounters(job.id, batchProcessed, batchSkipped, batchFailed);
-      totalProcessed += batchProcessed;
-      totalSkipped += batchSkipped;
-      totalFailed += batchFailed;
-    }
-
-    // 4. Conclude job with proper status semantics
-    const finalJob = await this.repository.getJobStatus(job.id);
-    if (finalJob && finalJob.status === 'RUNNING') {
-      const status = this.determineFinalStatus(finalJob);
-      await this.repository.concludeJob(job.id, status);
-      this.logger.log(
-        `[Worker] Job ${job.id} concluded with status=${status} ` +
-        `(processed: ${finalJob.processedItems}, skipped: ${finalJob.skippedItems}, failed: ${finalJob.failedItems})`
-      );
-    }
-  }
-
-  /**
-   * Process a single quote item.
-   * Returns the result metadata for database update.
-   */
-  private async processItem(quoteId: string, itemId: string, buyerCompanyId: string) {
-    // Start item
-    await this.repository.startItem(itemId);
-
-    // Fetch quote
-    const quote = await this.repository.findQuoteForProcessing(quoteId);
-    if (!quote || !quote.fornecedorId) {
-      throw new Error(`Quote ${quoteId} or supplier not found`);
-    }
-
-    // Build calculation DTO using the job's buyerCompanyId (deterministic, not global lookup)
-    const dto: CalculateQuoteTaxDto = {
-      buyerCompanyId,
-      supplierCompanyId: quote.fornecedorId,
-      item: {
-        quantity: quote.requisition.quantity,
-        unitPrice: quote.price,
-        totalFreight: quote.freight || 0,
-        itemUseType: quote.itemUseType as any,
-        creditNature: quote.creditNature as any,
-        operationType: quote.operationType as any,
-        ipiRate: quote.ipiRate || 0,
-        icmsRate: quote.icmsRate || 0,
-        pisRate: quote.pisRate || 0,
-        cofinsRate: quote.cofinsRate || 0,
-        hasIcmsSt: quote.hasIcmsSt || false
+      // All items processed — conclude job
+      const finalJob = await this.repository.getJobStatus(job.id);
+      if (finalJob && finalJob.status === 'RUNNING') {
+        await this.jobConcluder.conclude(finalJob);
       }
-    };
-
-    // Generate new hash
-    const newHashMeta = TaxHashUtil.generateDeterministicHash(dto);
-    const newHash = newHashMeta.hash;
-    const oldSnapshotId = quote.lastTaxSnapshotId;
-
-    // Fetch old hash
-    let oldInputHash: string | null = null;
-    if (oldSnapshotId) {
-      const oldSnap = await this.repository.getSnapshotHash(oldSnapshotId);
-      if (oldSnap) oldInputHash = oldSnap.inputHash;
+    } catch (e: any) {
+      // Critical error during job processing
+      this.logger.error(`[Worker] Job ${job.id} — Critical error: ${e.message}`, e.stack);
+      await this.repository.concludeJob(job.id, 'FAILED');
     }
-
-    // Smart skip: if hash unchanged, skip calculation
-    if (oldInputHash === newHash) {
-      return {
-        status: 'SKIPPED' as const,
-        skipReason: 'INPUT_HASH_UNCHANGED',
-        oldSnapshotId,
-        oldInputHash,
-        newHash
-      };
-    }
-
-    // Hash changed: recalculate
-    const result = await this.taxEngineService.calculate(dto);
-    const newSnap = await this.taxEngineService.saveSnapshot(quoteId, result, TAX_ENGINE_VERSION, dto);
-
-    return {
-      status: 'PROCESSED' as const,
-      oldSnapshotId,
-      newSnapshotId: newSnap.id,
-      oldInputHash,
-      newHash
-    };
   }
 
   /**
-   * Determines the final status of a job based on counters.
-   * - COMPLETED: all items processed or skipped, no failures
-   * - COMPLETED_ALL_SKIPPED: all items were skipped (no recalculation happened)
-   * - PARTIAL: some processed, some failed
-   * - FAILED: all items failed
+   * Acquires and locks the next queued job atomically.
+   * @returns The locked job record, or null if none available
    */
-  private determineFinalStatus(job: any): string {
-    const { totalItems, processedItems, skippedItems, failedItems } = job;
+  private async acquireNextJob(): Promise<PendingJobRecord | null> {
+    const job = await this.repository.findNextQueuedJob();
+    if (!job) return null;
 
-    if (totalItems === 0) return 'COMPLETED_ALL_SKIPPED';
+    const lockCount = await this.repository.lockJob(job.id);
+    if (lockCount === 0) {
+      this.logger.debug(`[Worker] Job ${job.id} was locked by another worker. Skipping.`);
+      return null;
+    }
 
-    if (failedItems === totalItems) return 'FAILED';
-
-    if (processedItems === 0 && skippedItems === totalItems) return 'COMPLETED_ALL_SKIPPED';
-
-    if (failedItems > 0 && processedItems > 0) return 'PARTIAL';
-
-    if (failedItems > 0 && processedItems === 0) return 'FAILED';
-
-    return 'COMPLETED';
+    return job;
   }
 
   /**
-   * Marks all remaining PENDING items as skipped due to cancellation.
+   * Checks if the job has been cancelled cooperatively.
+   * @returns true if cancelled, false otherwise
    */
-  private async cancelRemainingItems(jobId: string) {
-    await this.prisma.taxReprocessingJobItem.updateMany({
-      where: { jobId, status: 'PENDING' },
-      data: { status: 'SKIPPED', skipReason: 'JOB_CANCELLED', finishedAt: new Date() }
-    });
+  private async checkCancellation(jobId: string): Promise<boolean> {
+    if (!ReprocessingConfig.cooperativeCancellationEnabled) return false;
+
+    const status = await this.repository.getJobStatus(jobId);
+    if (status?.cancelRequestedAt) {
+      this.logger.log(`[Worker] Job ${jobId} — Cancellation detected at ${status.cancelRequestedAt}. Stopping.`);
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Processes a batch of items.
+   * @returns Counts of processed, skipped, and failed items
+   */
+  private async processBatch(
+    job: PendingJobRecord,
+    items: JobItemRecord[]
+  ): Promise<{ processed: number; skipped: number; failed: number }> {
+    let processed = 0;
+    let skipped = 0;
+    let failed = 0;
+
+    for (const item of items) {
+      try {
+        const result = await this.itemProcessor.process(
+          item.id,
+          item.quoteId,
+          job.buyerCompanyId
+        );
+
+        if (result.status === 'SKIPPED') {
+          await this.repository.markItemSkipped(item.id, {
+            skipReason: result.skipReason!,
+            oldSnapshotId: result.oldSnapshotId,
+            oldInputHash: result.oldInputHash,
+            newInputHash: result.newHash
+          });
+          skipped++;
+        } else {
+          await this.repository.markItemProcessed(item.id, {
+            oldSnapshotId: result.oldSnapshotId,
+            newSnapshotId: result.newSnapshotId!,
+            oldInputHash: result.oldInputHash,
+            newInputHash: result.newHash
+          });
+          processed++;
+        }
+      } catch (e: any) {
+        // Delegate retry logic to ItemProcessor
+        const wasRetried = await this.itemProcessor.handleItemError(item.id, e);
+        if (!wasRetried) {
+          failed++;
+        }
+        // If wasRetried, the item is reset to PENDING — don't count as failed yet
+      }
+    }
+
+    return { processed, skipped, failed };
   }
 }

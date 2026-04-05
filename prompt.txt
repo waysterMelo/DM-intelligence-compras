@@ -1,58 +1,43 @@
-Revisão da Fase 3 — Mudanças obrigatórias para o próximo commit
+Equipe,
 
-O último commit implementou de forma real a base da Fase 3, com fila em PostgreSQL, worker em background, endpoints administrativos, uso do hash para skip inteligente e persistência por job/item. A direção está correta e a fase avançou de verdade.
+O último commit da Fase 3 foi um avanço real e corrigiu pontos importantes que estavam pendentes. O worker agora usa `buyerCompanyId` explícito, o endpoint passou a usar DTO real, a criação de job já usa o usuário autenticado em vez de confiar no body, os endpoints receberam `JwtAuthGuard` e `RolesGuard`, a configuração de batch/retry foi centralizada, o cancelamento cooperativo entrou, e a semântica de status do job melhorou com `COMPLETED_ALL_SKIPPED`.
 
-No entanto, ainda existem pontos que impedem considerar essa fase pronta para um cenário SaaS. O próximo commit deve corrigir obrigatoriamente os itens abaixo.
+Esses pontos estão corretos e devem ser mantidos.
 
-1. Correção crítica do comprador (buyer)
-   O worker não pode mais resolver o comprador usando `findFirst({ companyRole: 'BUYER' })`. Isso é inseguro e incorreto para multiempresa/multitenant. O buyer precisa ser resolvido de forma determinística, por contexto da quote, por tenant ou por `buyerCompanyId` explicitamente informado e persistido no job. Esse é o ponto mais crítico a ser corrigido.
+No entanto, a Fase 3 ainda não pode ser considerada fechada para padrão SaaS porque ainda faltam ajustes fundamentais de isolamento e robustez.
 
-2. Multi-tenant real
-   O campo `tenantId` não pode ser apenas decorativo. A criação do job, a expansão do escopo, a seleção de quotes, a resolução do buyer e o processamento do worker devem respeitar isolamento real por tenant.
+Prioridade máxima agora: fechar multi-tenant de verdade.
 
-3. DTO real para criação de job
-   O endpoint de criação de job não deve mais usar `@Body() body: any`. Criar DTO específico com validação para:
+1. Multi-tenant:
+   O `tenantId` não pode ser apenas um campo registrado no job. Precisamos garantir isolamento real nas queries de escopo, leitura de job por ID, cancelamento e seleção de quotes. `TENANT_ALL` deve significar “todas as quotes do tenant atual”, nunca todas as quotes do sistema. O mesmo vale para `COMPANY`, `DATE_RANGE` e `ENGINE_VERSION`: todos devem ser tenant-scoped.
 
-* scopeType
-* scopePayloadJson
-* reason
-* engineVersionFrom
-* engineVersionTo
-  e demais campos necessários.
+2. Buyer e contexto:
+   A correção com `buyerCompanyId` foi boa, mas agora precisamos validar de forma mais forte que o buyer pertence ao contexto correto do tenant e do usuário.
 
-4. Segurança do usuário solicitante
-   `requestedByUserId` não deve ser confiado a partir do body como fonte final. O ideal é obter esse valor do contexto autenticado. Também é obrigatório adicionar autenticação/autorização adequada ao controller de jobs.
+3. Endpoints por ID:
+   Os endpoints `GET /:id`, `POST /:id/cancel` e `POST /:id/cancel-force` precisam validar explicitamente que o job pertence ao tenant do usuário autenticado. Não basta só proteger com guard; a autorização contextual tem que ser aplicada.
 
-5. Completar escopos pendentes
-   Implementar de fato os escopos:
+4. Escopo ENGINE_VERSION:
+   A lógica atual por comparação de string (`gte/lte`) não é robusta para versão semântica. Precisamos mudar esse escopo para comparação exata ou implementar tratamento semântico de versão.
 
-* DATE_RANGE
-* ENGINE_VERSION
-  Hoje eles ainda não estão concluídos no adapter.
+5. Retry:
+   O retry começou bem, mas ainda está no nível do job. Isso precisa ser movido para o nível do item (`TaxReprocessingJobItem`), com contagem de tentativas por item, para que erros transitórios e definitivos sejam tratados corretamente sem distorcer os contadores do job inteiro.
 
-6. Parametrizar batch size
-   Remover o `take: 10` hardcoded do worker e substituir por configuração centralizada, com valor padrão seguro e override por ambiente.
+6. Worker:
+   O worker está melhor, mas ainda precisa ser limpo e modularizado. Queremos uma separação mais clara entre orquestração, processamento de item, classificação de erro, cancelamento e conclusão do job.
 
-7. Melhorar semântica do status final do job
-   A lógica final precisa considerar melhor casos com muitos itens `SKIPPED`, para que o resumo operacional do job reflita corretamente se houve recalculo real, apenas skips ou falhas parciais.
+7. Progresso e observabilidade:
+   O retorno dos jobs deve evoluir para expor melhor os números operacionais e os logs precisam dar visão clara de batch, progresso, cancelamento, retry e status final.
 
-8. Melhorar cancelamento
-   Adicionar cancelamento cooperativo mais claro, idealmente com `cancelRequestedAt` e comportamento previsível para batches ainda não iniciados.
+Nova ordem de execução:
 
-9. Retry mínimo
-   Implementar política mínima de retry para erros transitórios, distinguindo falha técnica temporária de erro de negócio definitivo.
+1. fechar multi-tenant real
+2. corrigir escopos, especialmente ENGINE_VERSION
+3. mover retry para granularidade por item
+4. limpar e modularizar o worker
+5. enriquecer progresso e observabilidade
 
-10. Respeitar melhor a abstração da fila
-    A abstração `ReprocessingQueuePort` foi uma decisão correta, mas o worker ainda depende demais de Prisma diretamente. Melhorar isso para reduzir acoplamento da fila ao mecanismo atual.
+Resumo:
+O commit foi bom e melhorou a Fase 3 de forma concreta. O plano continua, mas agora a prioridade deixa de ser “fazer o job funcionar” e passa a ser “blindar o job para SaaS multi-tenant de produção”.
 
-Critérios de aceite do próximo commit:
-
-* buyer resolvido corretamente por contexto real
-* isolamento multi-tenant aplicado
-* endpoint com DTO validado
-* endpoint protegido por autenticação/autorização
-* escopos DATE_RANGE e ENGINE_VERSION funcionando
-* batch size configurável
-* semântica operacional melhor para processados/skipped/failed
-
-Sem esses ajustes, a Fase 3 continua sendo um bom avanço técnico, mas ainda não está madura o suficiente para ser considerada pronta para SaaS.
+Sigam nessa direção no próximo commit.

@@ -5,6 +5,8 @@ import {
   Param,
   Body,
   BadRequestException,
+  NotFoundException,
+  ForbiddenException,
   UseGuards,
   Request,
   Req
@@ -13,6 +15,7 @@ import { ReprocessingQueuePort } from './ports/reprocessing-queue.port';
 import { CreateJobDto } from './dto/create-job.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
+import { ReprocessingRepository } from './repositories/reprocessing.repository';
 
 interface AuthenticatedRequest extends Request {
   user: {
@@ -26,7 +29,10 @@ interface AuthenticatedRequest extends Request {
 @Controller('tax-governance/reprocess-jobs')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class TaxJobsController {
-  constructor(private readonly queue: ReprocessingQueuePort) {}
+  constructor(
+    private readonly queue: ReprocessingQueuePort,
+    private readonly repository: ReprocessingRepository
+  ) {}
 
   @Post()
   @Roles('ADMIN', 'MANAGER')
@@ -80,23 +86,67 @@ export class TaxJobsController {
   }
 
   @Get(':id')
-  async getJobInfo(@Param('id') id: string) {
-    const job = await this.queue.getJobProgress(id);
-    if (!job) throw new BadRequestException('Job not found');
-    return job;
+  async getJobInfo(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    const tenantId = req.user.tenantId;
+
+    // Validate job belongs to user's tenant
+    const job = await this.repository.getJobByTenant(id, tenantId!);
+    if (!job) {
+      throw new NotFoundException(
+        `Job ${id} not found or does not belong to your tenant.`
+      );
+    }
+
+    // Return enriched progress
+    return this.repository.getJobSummary(id);
   }
 
   @Post(':id/cancel')
   @Roles('ADMIN', 'MANAGER')
-  async cancelJob(@Param('id') id: string) {
+  async cancelJob(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    const tenantId = req.user.tenantId;
+
+    // Validate job belongs to user's tenant
+    const job = await this.repository.getJobByTenant(id, tenantId!);
+    if (!job) {
+      throw new NotFoundException(
+        `Job ${id} not found or does not belong to your tenant.`
+      );
+    }
+
+    if (!['QUEUED', 'RUNNING'].includes(job.status)) {
+      throw new BadRequestException(
+        `Cannot cancel job in status: ${job.status}. Only QUEUED or RUNNING jobs can be cancelled.`
+      );
+    }
+
     // Cooperative cancellation: allows in-progress work to finish gracefully
     await this.queue.cancelJobCooperative(id);
-    return { success: true, message: `Cancellation requested for job ${id}. In-progress work will finish gracefully.` };
+    return {
+      success: true,
+      message: `Cancellation requested for job ${id}. In-progress work will finish gracefully.`
+    };
   }
 
   @Post(':id/cancel-force')
   @Roles('ADMIN')
-  async forceCancelJob(@Param('id') id: string) {
+  async forceCancelJob(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    const tenantId = req.user.tenantId;
+
+    // Validate job belongs to user's tenant
+    const job = await this.repository.getJobByTenant(id, tenantId!);
+    if (!job) {
+      throw new NotFoundException(
+        `Job ${id} not found or does not belong to your tenant.`
+      );
+    }
+
+    if (!['QUEUED', 'RUNNING'].includes(job.status)) {
+      throw new BadRequestException(
+        `Cannot force cancel job in status: ${job.status}. Only QUEUED or RUNNING jobs can be force cancelled.`
+      );
+    }
+
     // Force cancellation: immediately marks as CANCELED
     await this.queue.cancelJob(id);
     return { success: true, message: `Job ${id} forcefully canceled.` };

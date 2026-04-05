@@ -6,6 +6,8 @@ import { PrismaService } from '../../prisma.service';
 import { ReprocessingQueuePort } from './ports/reprocessing-queue.port';
 import { PostgresQueueAdapter } from './adapters/postgres-queue.adapter';
 import { ReprocessingRepository } from './repositories/reprocessing.repository';
+import { ItemProcessor } from './services/item-processor.service';
+import { JobConcluder } from './services/job-concluder.service';
 import { TaxEngineModule } from '../tax-engine/tax-engine.module';
 import { TaxEngineService } from '../tax-engine/services/tax-engine.service';
 import { GrossCostCalculator } from '../tax-engine/services/calculators/gross-cost.calculator';
@@ -20,12 +22,14 @@ import { AuthModule } from '../auth/auth.module';
   imports: [
     ScheduleModule.forRoot(),
     TaxEngineModule,
-    AuthModule // For JwtAuthGuard
+    AuthModule
   ],
   controllers: [TaxJobsController],
   providers: [
     PrismaService,
     ReprocessingRepository,
+    ItemProcessor,
+    JobConcluder,
     {
       provide: ReprocessingQueuePort,
       useClass: PostgresQueueAdapter

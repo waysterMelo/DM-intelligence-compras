@@ -2,6 +2,7 @@ import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ReprocessingQueuePort, CreateJobInput, JobSummary } from '../ports/reprocessing-queue.port';
 import { AuthContext, ScopeType } from '../dto/create-job.dto';
 import { PrismaService } from '../../../prisma.service';
+import { SemverUtil } from '../utils/semver.util';
 
 @Injectable()
 export class PostgresQueueAdapter implements ReprocessingQueuePort {
@@ -26,13 +27,13 @@ export class PostgresQueueAdapter implements ReprocessingQueuePort {
       );
     }
 
-    // Verify buyer exists and belongs to this tenant
+    // Validate buyer belongs to this tenant and is active
     const buyer = await this.prisma.fornecedor.findFirst({
-      where: { id: buyerCompanyId, companyRole: 'BUYER', isActive: true }
+      where: { id: buyerCompanyId, companyRole: 'BUYER', isActive: true, tenantId }
     });
     if (!buyer) {
       throw new BadRequestException(
-        `Buyer company ${buyerCompanyId} not found, not active, or not a BUYER role.`
+        `Buyer company ${buyerCompanyId} not found, not active, or does not belong to tenant ${tenantId}.`
       );
     }
 
@@ -51,15 +52,18 @@ export class PostgresQueueAdapter implements ReprocessingQueuePort {
       }
     });
 
-    // Resolve scope to quote IDs (with tenant isolation)
-    const targetQuoteIds = await this.resolveScope(input, tenantId);
+    // Resolve scope to quote IDs (with strict tenant isolation)
+    const targetQuoteIds = await this.resolveScope(input, tenantId, buyerCompanyId);
 
     if (targetQuoteIds.length === 0) {
       await this.prisma.taxReprocessingJob.update({
         where: { id: job.id },
         data: { status: 'COMPLETED_ALL_SKIPPED', finishedAt: new Date() }
       });
-      this.logger.log(`[Adapter] Job ${job.id} created with 0 target quotes. Marked as COMPLETED_ALL_SKIPPED.`);
+      this.logger.log(
+        `[Adapter] Job ${job.id} created with 0 target quotes for tenant ${tenantId}. ` +
+        `Marked as COMPLETED_ALL_SKIPPED.`
+      );
       return job.id;
     }
 
@@ -77,33 +81,56 @@ export class PostgresQueueAdapter implements ReprocessingQueuePort {
       data: { totalItems: targetQuoteIds.length }
     });
 
-    this.logger.log(`[Adapter] Job ${job.id} created with ${targetQuoteIds.length} items for tenant ${tenantId}.`);
+    this.logger.log(
+      `[Adapter] Job ${job.id} created with ${targetQuoteIds.length} items for tenant ${tenantId}.`
+    );
     return job.id;
   }
 
-  private async resolveScope(input: CreateJobInput, tenantId: string): Promise<string[]> {
+  /**
+   * Resolves scope to quote IDs with strict tenant isolation.
+   * TENANT_ALL means all quotes belonging to this tenant, NEVER all quotes in the system.
+   */
+  private async resolveScope(input: CreateJobInput, tenantId: string, buyerCompanyId: string): Promise<string[]> {
     switch (input.scopeType) {
       case ScopeType.QUOTE: {
         const quoteId = input.scopePayloadJson?.quoteId;
         if (!quoteId) throw new BadRequestException('scopePayloadJson.quoteId is required for QUOTE scope');
+        // Verify quote belongs to tenant (via supplier -> tenant relationship)
+        const quote = await this.prisma.quote.findFirst({
+          where: { id: quoteId, fornecedor: { tenantId } },
+          select: { id: true }
+        });
+        if (!quote) {
+          throw new BadRequestException(`Quote ${quoteId} not found or does not belong to tenant ${tenantId}.`);
+        }
         return [quoteId];
       }
 
       case ScopeType.COMPANY: {
         const companyId = input.scopePayloadJson?.companyId;
         if (!companyId) throw new BadRequestException('scopePayloadJson.companyId is required for COMPANY scope');
+        // Company must belong to this tenant
+        const company = await this.prisma.fornecedor.findFirst({
+          where: { id: companyId, tenantId }
+        });
+        if (!company) {
+          throw new BadRequestException(`Company ${companyId} does not belong to tenant ${tenantId}.`);
+        }
         const quotes = await this.prisma.quote.findMany({
-          where: { fornecedorId: companyId },
+          where: { fornecedorId: companyId, fornecedor: { tenantId } },
           select: { id: true }
         });
         return quotes.map(q => q.id);
       }
 
       case ScopeType.TENANT_ALL: {
-        // All quotes in the system (tenant-scoped)
+        // ALL quotes belonging to this tenant (via supplier -> tenant)
         const quotes = await this.prisma.quote.findMany({
+          where: { fornecedor: { tenantId } },
           select: { id: true }
         });
+        this.logger.log(`[Adapter] TENANT_ALL scope matched ${quotes.length} quotes for tenant ${tenantId}`);
         return quotes.map(q => q.id);
       }
 
@@ -111,10 +138,14 @@ export class PostgresQueueAdapter implements ReprocessingQueuePort {
         const startDate = input.scopePayloadJson?.startDate;
         const endDate = input.scopePayloadJson?.endDate;
         if (!startDate || !endDate) {
-          throw new BadRequestException('scopePayloadJson.startDate and scopePayloadJson.endDate are required for DATE_RANGE scope');
+          throw new BadRequestException(
+            'scopePayloadJson.startDate and scopePayloadJson.endDate are required for DATE_RANGE scope'
+          );
         }
+        // Date range scoped to tenant only
         const quotes = await this.prisma.quote.findMany({
           where: {
+            fornecedor: { tenantId },
             createdAt: {
               gte: new Date(startDate),
               lte: new Date(endDate)
@@ -122,7 +153,7 @@ export class PostgresQueueAdapter implements ReprocessingQueuePort {
           },
           select: { id: true }
         });
-        this.logger.log(`[Adapter] DATE_RANGE scope matched ${quotes.length} quotes`);
+        this.logger.log(`[Adapter] DATE_RANGE scope matched ${quotes.length} quotes for tenant ${tenantId}`);
         return quotes.map(q => q.id);
       }
 
@@ -130,27 +161,29 @@ export class PostgresQueueAdapter implements ReprocessingQueuePort {
         const fromVersion = input.engineVersionFrom || input.scopePayloadJson?.fromVersion;
         const toVersion = input.engineVersionTo || input.scopePayloadJson?.toVersion;
 
-        const whereClause: any = {};
-        if (fromVersion) {
-          whereClause.lastTaxEngineVersion = { gte: fromVersion };
-        }
-        if (toVersion) {
-          whereClause.lastTaxEngineVersion = {
-            ...whereClause.lastTaxEngineVersion,
-            lte: toVersion
-          };
-        }
-        // If neither specified, match all quotes with any engine version set
-        if (!fromVersion && !toVersion) {
-          whereClause.lastTaxEngineVersion = { not: null };
-        }
-
+        // Get all quotes belonging to this tenant with a non-null engine version
         const quotes = await this.prisma.quote.findMany({
-          where: whereClause,
-          select: { id: true }
+          where: {
+            fornecedor: { tenantId },
+            lastTaxEngineVersion: { not: null }
+          },
+          select: { id: true, lastTaxEngineVersion: true }
         });
-        this.logger.log(`[Adapter] ENGINE_VERSION scope matched ${quotes.length} quotes`);
-        return quotes.map(q => q.id);
+
+        // Filter by semantic version comparison
+        const matchedIds = quotes
+          .filter(q => {
+            const ver = q.lastTaxEngineVersion;
+            if (!ver) return false;
+            return SemverUtil.inRange(ver, fromVersion, toVersion);
+          })
+          .map(q => q.id);
+
+        this.logger.log(
+          `[Adapter] ENGINE_VERSION scope (${fromVersion || '*'} → ${toVersion || '*'}) ` +
+          `matched ${matchedIds.length}/${quotes.length} quotes for tenant ${tenantId}`
+        );
+        return matchedIds;
       }
 
       default:
@@ -188,6 +221,8 @@ export class PostgresQueueAdapter implements ReprocessingQueuePort {
             status: true,
             skipReason: true,
             errorMessage: true,
+            retryCount: true,
+            maxRetries: true,
             startedAt: true,
             finishedAt: true
           }
@@ -198,7 +233,6 @@ export class PostgresQueueAdapter implements ReprocessingQueuePort {
   }
 
   async cancelJob(jobId: string): Promise<void> {
-    // Force cancel: only QUEUED or RUNNING jobs
     await this.prisma.taxReprocessingJob.updateMany({
       where: { id: jobId, status: { in: ['QUEUED', 'RUNNING'] } },
       data: { status: 'CANCELED', finishedAt: new Date() }
@@ -206,7 +240,6 @@ export class PostgresQueueAdapter implements ReprocessingQueuePort {
   }
 
   async cancelJobCooperative(jobId: string): Promise<void> {
-    // Cooperative: sets cancelRequestedAt, allowing in-progress work to finish gracefully
     await this.prisma.taxReprocessingJob.updateMany({
       where: { id: jobId, status: { in: ['QUEUED', 'RUNNING'] }, cancelRequestedAt: null },
       data: { cancelRequestedAt: new Date() }

@@ -61,6 +61,7 @@ model Fornecedor {
   isIcmsTaxpayer  Boolean  @default(true)
   isIpiTaxpayer   Boolean  @default(false)
   state           String   @default("SP")
+  tenantId        String?  // Isolamento Multi-Tenant
   createdAt       DateTime @default(now())
 
   // Relacionamento: Uma empresa pode dar várias cotações
@@ -175,6 +176,9 @@ model Quote {
   requisition   Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
 
   taxSnapshots QuoteTaxSnapshot[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // Modelo de Snapshot Fiscal Auditável
@@ -262,17 +266,20 @@ model TaxReprocessingJobItem {
   id              String         @id @default(uuid())
   jobId           String
   quoteId         String
-  
+
   oldSnapshotId   String?
   newSnapshotId   String?
-  
+
   oldInputHash    String?
   newInputHash    String?
-  
+
   status          JobItemStatus  @default(PENDING)
   skipReason      String?        // Ex: INPUT_HASH_UNCHANGED
   errorMessage    String?
-  
+
+  retryCount      Int            @default(0)
+  maxRetries      Int            @default(3)
+
   startedAt       DateTime?
   finishedAt      DateTime?
 

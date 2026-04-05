@@ -8,6 +8,8 @@ export interface JobItemRecord {
   status: string;
   skipReason?: string;
   errorMessage?: string;
+  retryCount: number;
+  maxRetries: number;
   startedAt?: Date;
   finishedAt?: Date;
 }
@@ -62,6 +64,8 @@ export interface SnapshotHashRecord {
 export class ReprocessingRepository {
   constructor(private readonly prisma: PrismaService) {}
 
+  // === Job Lifecycle ===
+
   async findNextQueuedJob(): Promise<PendingJobRecord | null> {
     return this.prisma.taxReprocessingJob.findFirst({
       where: { status: 'QUEUED' },
@@ -83,12 +87,31 @@ export class ReprocessingRepository {
     }) as Promise<PendingJobRecord | null>;
   }
 
-  async findPendingJobItems(jobId: string, batchSize: number): Promise<JobItemRecord[]> {
-    return this.prisma.taxReprocessingJobItem.findMany({
-      where: { jobId, status: 'PENDING' },
-      take: batchSize
-    }) as Promise<JobItemRecord[]>;
+  async getJobByTenant(jobId: string, tenantId: string): Promise<PendingJobRecord | null> {
+    return this.prisma.taxReprocessingJob.findFirst({
+      where: { id: jobId, tenantId }
+    }) as Promise<PendingJobRecord | null>;
   }
+
+  async concludeJob(jobId: string, status: string): Promise<void> {
+    await this.prisma.taxReprocessingJob.update({
+      where: { id: jobId },
+      data: { status: status as any, finishedAt: new Date() }
+    });
+  }
+
+  async incrementJobCounters(jobId: string, processed: number, skipped: number, failed: number): Promise<void> {
+    await this.prisma.taxReprocessingJob.update({
+      where: { id: jobId },
+      data: {
+        processedItems: { increment: processed },
+        skippedItems: { increment: skipped },
+        failedItems: { increment: failed }
+      }
+    });
+  }
+
+  // === Item Lifecycle ===
 
   async findPendingJobItemsByJobId(jobId: string, batchSize: number): Promise<JobItemRecord[]> {
     return this.prisma.taxReprocessingJobItem.findMany({
@@ -153,41 +176,96 @@ export class ReprocessingRepository {
     });
   }
 
-  async incrementJobCounters(jobId: string, processed: number, skipped: number, failed: number): Promise<void> {
-    await this.prisma.taxReprocessingJob.update({
-      where: { id: jobId },
+  async incrementItemRetry(itemId: string): Promise<{ retryCount: number; maxRetries: number } | null> {
+    const updated = await this.prisma.taxReprocessingJobItem.update({
+      where: { id: itemId },
+      data: { retryCount: { increment: 1 } },
+      select: { retryCount: true, maxRetries: true }
+    });
+    return updated;
+  }
+
+  async resetItemToPending(itemId: string, errorMessage?: string): Promise<void> {
+    // Reset item back to PENDING for retry (keep error message for debugging)
+    await this.prisma.taxReprocessingJobItem.update({
+      where: { id: itemId },
       data: {
-        processedItems: { increment: processed },
-        skippedItems: { increment: skipped },
-        failedItems: { increment: failed }
+        status: 'PENDING',
+        errorMessage: errorMessage || null,
+        startedAt: null,
+        finishedAt: null
       }
     });
   }
 
-  async concludeJob(jobId: string, status: string): Promise<void> {
-    await this.prisma.taxReprocessingJob.update({
+  async cancelRemainingItems(jobId: string): Promise<void> {
+    await this.prisma.taxReprocessingJobItem.updateMany({
+      where: { jobId, status: 'PENDING' },
+      data: { status: 'SKIPPED', skipReason: 'JOB_CANCELLED', finishedAt: new Date() }
+    });
+  }
+
+  async getJobSummary(jobId: string): Promise<any> {
+    const job = await this.prisma.taxReprocessingJob.findUnique({
       where: { id: jobId },
-      data: { status, finishedAt: new Date() }
+      include: {
+        items: {
+          select: {
+            id: true,
+            quoteId: true,
+            status: true,
+            skipReason: true,
+            errorMessage: true,
+            retryCount: true,
+            maxRetries: true,
+            startedAt: true,
+            finishedAt: true
+          },
+          orderBy: { finishedAt: 'desc' }
+        }
+      }
     });
+
+    if (!job) return null;
+
+    // Compute operational summary
+    const totalItems = job.totalItems || 0;
+    const processed = job.processedItems || 0;
+    const skipped = job.skippedItems || 0;
+    const failed = job.failedItems || 0;
+    const completionRate = totalItems > 0 ? ((processed + skipped + failed) / totalItems) * 100 : 0;
+    const skipRate = totalItems > 0 ? (skipped / totalItems) * 100 : 0;
+    const failRate = totalItems > 0 ? (failed / totalItems) * 100 : 0;
+
+    const itemsByStatus: Record<string, number> = {};
+    for (const item of job.items) {
+      itemsByStatus[item.status] = (itemsByStatus[item.status] || 0) + 1;
+    }
+
+    return {
+      ...job,
+      _summary: {
+        completionRate: `${completionRate.toFixed(1)}%`,
+        skipRate: `${skipRate.toFixed(1)}%`,
+        failRate: `${failRate.toFixed(1)}%`,
+        itemsByStatus,
+        hasRetries: job.items.some((i: any) => i.retryCount > 0)
+      }
+    };
   }
 
-  async cancelJobCooperative(jobId: string): Promise<void> {
-    await this.prisma.taxReprocessingJob.update({
-      where: { id: jobId, status: { in: ['QUEUED', 'RUNNING'] } },
-      data: { cancelRequestedAt: new Date() }
-    });
-  }
-
-  async cancelJobForce(jobId: string): Promise<void> {
-    await this.prisma.taxReprocessingJob.updateMany({
-      where: { id: jobId, status: { in: ['QUEUED', 'RUNNING'] } },
-      data: { status: 'CANCELED', finishedAt: new Date() }
-    });
-  }
+  // === Quote Queries (all tenant-scoped) ===
 
   async findQuoteForProcessing(quoteId: string): Promise<QuoteForProcessing | null> {
     return this.prisma.quote.findUnique({
       where: { id: quoteId },
+      include: { requisition: true, fornecedor: true }
+    }) as Promise<QuoteForProcessing | null>;
+  }
+
+  async findQuoteForProcessingTenantScoped(quoteId: string, tenantId: string): Promise<QuoteForProcessing | null> {
+    return this.prisma.quote.findFirst({
+      where: { id: quoteId, fornecedor: { tenantId } },
       include: { requisition: true, fornecedor: true }
     }) as Promise<QuoteForProcessing | null>;
   }
@@ -199,24 +277,24 @@ export class ReprocessingRepository {
     }) as Promise<SnapshotHashRecord | null>;
   }
 
-  async getQuotesByCompanyId(companyId: string): Promise<{ id: string }[]> {
+  async getQuotesByCompanyId(companyId: string, tenantId: string): Promise<{ id: string }[]> {
     return this.prisma.quote.findMany({
-      where: { fornecedorId: companyId },
+      where: { fornecedorId: companyId, fornecedor: { tenantId } },
       select: { id: true }
     });
   }
 
   async getQuotesByTenant(tenantId: string): Promise<{ id: string }[]> {
-    // In current schema, tenant is resolved via buyer company
-    // This method should be adapted when tenant filtering is fully implemented
     return this.prisma.quote.findMany({
+      where: { fornecedor: { tenantId } },
       select: { id: true }
     });
   }
 
-  async getQuotesByDateRange(start: Date, end: Date): Promise<{ id: string }[]> {
+  async getQuotesByDateRange(start: Date, end: Date, tenantId: string): Promise<{ id: string }[]> {
     return this.prisma.quote.findMany({
       where: {
+        fornecedor: { tenantId },
         createdAt: {
           gte: start,
           lte: end
@@ -226,28 +304,25 @@ export class ReprocessingRepository {
     });
   }
 
-  async getQuotesByEngineVersion(fromVersion: string, toVersion?: string): Promise<{ id: string }[]> {
-    const where: any = {};
-    if (fromVersion) {
-      where.lastTaxEngineVersion = { gte: fromVersion };
-    }
-    if (toVersion) {
-      where.lastTaxEngineVersion = { ...where.lastTaxEngineVersion, lte: toVersion };
+  async getQuotesByEngineVersion(fromVersion: string | null, toVersion: string | null, tenantId: string): Promise<{ id: string; lastTaxEngineVersion: string | null }[]> {
+    const whereClause: any = { fornecedor: { tenantId } };
+    if (fromVersion || toVersion) {
+      whereClause.lastTaxEngineVersion = {};
+      if (fromVersion) whereClause.lastTaxEngineVersion.gte = fromVersion;
+      if (toVersion) whereClause.lastTaxEngineVersion.lte = toVersion;
+    } else {
+      whereClause.lastTaxEngineVersion = { not: null };
     }
     return this.prisma.quote.findMany({
-      where,
-      select: { id: true }
+      where: whereClause,
+      select: { id: true, lastTaxEngineVersion: true }
     });
   }
 
-  async getQuotesByTenantAndBuyerId(buyerCompanyId: string): Promise<{ id: string }[]> {
+  async getAllQuotes(tenantId: string): Promise<{ id: string }[]> {
     return this.prisma.quote.findMany({
-      where: { fornecedorId: { not: buyerCompanyId } }, // quotes from suppliers TO this buyer
+      where: { fornecedor: { tenantId } },
       select: { id: true }
     });
-  }
-
-  async getAllQuotes(): Promise<{ id: string }[]> {
-    return this.prisma.quote.findMany({ select: { id: true } });
   }
 }
