@@ -133,6 +133,7 @@ END $$;
 DO $$
 DECLARE
   col_type TEXT;
+  invalid_roles TEXT[];
 BEGIN
   SELECT udt_name INTO col_type
   FROM information_schema.columns
@@ -142,24 +143,34 @@ BEGIN
     -- ✅ Já migrado — nada a fazer
     RAISE NOTICE 'User.role já é do tipo UserRole. Pulando.';
   ELSIF col_type = 'text' OR col_type IS NULL THEN
-    -- ✅ Coluna é TEXT — migrar preservando valores
-    -- Adicionar coluna temporária com enum
+    -- 1. Diagnóstico: encontrar valores não previstos no enum
+    SELECT array_agg(DISTINCT "role")
+    INTO invalid_roles
+    FROM "User"
+    WHERE "role" IS NOT NULL
+      AND "role" <> ''
+      AND UPPER(trim("role")) NOT IN ('BUYER', 'MANAGER', 'ADMIN', 'SPECIALIST');
+
+    -- 2. Normalizar valores inválidos para BUYER ANTES do cast
+    -- (o cast ("role")::"UserRole" falharia com valores desconhecidos)
+    IF invalid_roles IS NOT NULL AND array_length(invalid_roles, 1) > 0 THEN
+      RAISE WARNING 'User.role: valores legados não previstos normalizados para BUYER: %', invalid_roles;
+
+      UPDATE "User"
+      SET "role" = 'BUYER'
+      WHERE UPPER(trim("role")) NOT IN ('BUYER', 'MANAGER', 'ADMIN', 'SPECIALIST');
+    END IF;
+
+    -- 3. Adicionar coluna temporária com enum
     ALTER TABLE "User" ADD COLUMN "role_new" "UserRole" NOT NULL DEFAULT 'BUYER';
 
-    -- Mapear valores de texto para enum (preserve dados existentes)
+    -- 4. Cast seguro (todos os valores agora são válidos)
     UPDATE "User"
-    SET "role_new" = ("role")::"UserRole"
+    SET "role_new" = (UPPER(trim("role")))::"UserRole"
     WHERE "role" IS NOT NULL
       AND "role" <> '';
 
-    -- Se algum valor não mapeou automaticamente (texto desconhecido), atribuir BUYER
-    UPDATE "User"
-    SET "role_new" = 'BUYER'
-    WHERE "role_new" = 'BUYER'
-      AND "role" IS NOT NULL
-      AND "role" <> 'BUYER';
-
-    -- Remover coluna antiga e renomear nova
+    -- 5. Remover coluna antiga e renomear nova
     ALTER TABLE "User" DROP COLUMN "role";
     ALTER TABLE "User" RENAME COLUMN "role_new" TO "role";
 
