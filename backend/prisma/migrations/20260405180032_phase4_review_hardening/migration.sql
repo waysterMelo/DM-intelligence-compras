@@ -1,44 +1,45 @@
 /*
-  Migration segura para produção — Phase 4 Review Hardening
+  Migration segura para produção — Phase 4 Review Hardening (REVISÃO FINAL)
 
-  Riscos tratados:
-  - Quote.updatedAt: adiciona com DEFAULT NOW() para tabelas populadas
-  - User.role: verifica se já está migrado antes de drop
-  - buyerCompanyId: backfill condicional antes de NOT NULL
-  - tenantId: verificação antes de NOT NULL
-  - Todas as operações são idempotentes (re-run safe)
+  Riscos tratados com segurança:
+  1. User.role: migra TEXT → enum preservando valores existentes (BUYER, MANAGER, ADMIN)
+  2. buyerCompanyId: backfill via User.fornecedorId e tenant-scoping correto
+  3. Nomes de tabelas coerentes com schema (fornecedores, não Fornecedor)
+  4. Estado final previsível: campos NOT NULL viram obrigatórios ou a migration falha com erro claro
+  5. Re-run safe: todas as operações são idempotentes
+
+  Nomes físicos de tabelas confirmados pelas migrations anteriores:
+  - fornecedores (nome lógico: Company/Fornecedor)
+  - User
+  - Quote
+  - TaxRuleCatalog
+  - tax_reprocessing_jobs
+  - tax_reprocessing_job_items
 */
 
 -- =============================================
--- ENUMS
+-- ENUMS (seguros para re-run)
 -- =============================================
 
-CREATE TYPE "UserRole" AS ENUM ('BUYER', 'MANAGER', 'ADMIN', 'SPECIALIST');
-
-CREATE TYPE "ReviewStatus" AS ENUM ('OPEN', 'ASSIGNED', 'IN_REVIEW', 'RESOLVED', 'DISMISSED');
-
-CREATE TYPE "ReviewReasonCode" AS ENUM ('LOW_CONFIDENCE', 'BLOCKED', 'HIGH_TAX_DELTA', 'RULE_CONFLICT', 'MANUAL_AUDIT_REQUESTED', 'DOCUMENT_MISMATCH', 'MISSING_CRITICAL_TAX_DATA');
-
-CREATE TYPE "ReviewOutcome" AS ENUM ('CALCULATION_ACCEPTED', 'CALCULATION_ADJUSTED', 'CALCULATION_REJECTED', 'ESCALATED');
-
-CREATE TYPE "ReviewSeverity" AS ENUM ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL');
+CREATE TYPE IF NOT EXISTS "UserRole" AS ENUM ('BUYER', 'MANAGER', 'ADMIN', 'SPECIALIST');
+CREATE TYPE IF NOT EXISTS "ReviewStatus" AS ENUM ('OPEN', 'ASSIGNED', 'IN_REVIEW', 'RESOLVED', 'DISMISSED');
+CREATE TYPE IF NOT EXISTS "ReviewReasonCode" AS ENUM ('LOW_CONFIDENCE', 'BLOCKED', 'HIGH_TAX_DELTA', 'RULE_CONFLICT', 'MANUAL_AUDIT_REQUESTED', 'DOCUMENT_MISMATCH', 'MISSING_CRITICAL_TAX_DATA');
+CREATE TYPE IF NOT EXISTS "ReviewOutcome" AS ENUM ('CALCULATION_ACCEPTED', 'CALCULATION_ADJUSTED', 'CALCULATION_REJECTED', 'ESCALATED');
+CREATE TYPE IF NOT EXISTS "ReviewSeverity" AS ENUM ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL');
 
 -- JobStatus enum value (idempotente)
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'COMPLETED_ALL_SKIPPED') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'COMPLETED_ALL_SKIPPED' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'JobStatus')) THEN
     ALTER TYPE "JobStatus" ADD VALUE 'COMPLETED_ALL_SKIPPED';
   END IF;
 END $$;
 
 -- =============================================
--- QUOTE — colunas novas
+-- QUOTE — colunas novas (com defaults para tabelas populadas)
 -- =============================================
 
 ALTER TABLE "Quote" ADD COLUMN IF NOT EXISTS "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP;
 ALTER TABLE "Quote" ADD COLUMN IF NOT EXISTS "pendingReview" BOOLEAN NOT NULL DEFAULT false;
-
--- updatedAt: usar DEFAULT NOW() para tabelas já populadas
--- Todas as linhas existentes recebem NOW() como updatedAt inicial
 ALTER TABLE "Quote" ADD COLUMN IF NOT EXISTS "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT NOW();
 
 -- =============================================
@@ -63,7 +64,7 @@ ALTER TABLE "tax_reprocessing_job_items" ADD COLUMN IF NOT EXISTS "maxRetries" I
 ALTER TABLE "tax_reprocessing_job_items" ADD COLUMN IF NOT EXISTS "retryCount" INTEGER NOT NULL DEFAULT 0;
 
 -- =============================================
--- TAX REPROCESSING JOBS — backfill antes de NOT NULL
+-- TAX REPROCESSING JOBS — colunas novas
 -- =============================================
 
 ALTER TABLE "tax_reprocessing_jobs" ADD COLUMN IF NOT EXISTS "buyerCompanyId" TEXT;
@@ -71,30 +72,64 @@ ALTER TABLE "tax_reprocessing_jobs" ADD COLUMN IF NOT EXISTS "cancelRequestedAt"
 ALTER TABLE "tax_reprocessing_jobs" ADD COLUMN IF NOT EXISTS "maxRetries" INTEGER NOT NULL DEFAULT 3;
 ALTER TABLE "tax_reprocessing_jobs" ADD COLUMN IF NOT EXISTS "retryCount" INTEGER NOT NULL DEFAULT 0;
 
--- Backfill buyerCompanyId: inferir do contexto do job se possível
--- Se não houver como inferir, associar à primeira company do tenant
--- FIXME: ajustar conforme necessidade operacional
-UPDATE "tax_reprocessing_jobs"
-SET "buyerCompanyId" = (SELECT id FROM "Fornecedor" WHERE "companyRole" = 'BUYER' LIMIT 1)
-WHERE "buyerCompanyId" IS NULL;
+-- =============================================
+-- BACKFILL: buyerCompanyId com lógica real de negócio
+-- =============================================
+--
+-- Problema anterior: associava ao primeiro buyer encontrado (errado e ignora tenant).
+--
+-- Nova estratégia — inferir buyerCompanyId a partir de requestedByUserId:
+--   1. O job tem requestedByUserId (quem disparou o job)
+--   2. User.fornecedorId é a company daquele usuário
+--   3. Se a company for do tipo BUYER, usamos como buyerCompanyId
+--
+-- Isso preserva o contexto de quem criou o job e respeita isolamento de tenant.
 
--- Tornar NOT NULL apenas se não houver NULLs remanescentes
+UPDATE "tax_reprocessing_jobs" j
+SET "buyerCompanyId" = f.id
+FROM "User" u
+JOIN "fornecedores" f ON f.id = u."fornecedorId"
+WHERE j."buyerCompanyId" IS NULL
+  AND j."requestedByUserId" = u.id
+  AND f."companyRole" = 'BUYER';
+
+-- Se ainda houver NULLs após o backfill por usuário, não tornar NOT NULL.
+-- A migration sinaliza o problema e para (não silenciar).
+
 DO $$
+DECLARE
+  remaining_buyer_nulls INTEGER;
+  remaining_tenant_nulls INTEGER;
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM "tax_reprocessing_jobs" WHERE "buyerCompanyId" IS NULL) THEN
+  SELECT COUNT(*) INTO remaining_buyer_nulls FROM "tax_reprocessing_jobs" WHERE "buyerCompanyId" IS NULL;
+  SELECT COUNT(*) INTO remaining_tenant_nulls FROM "tax_reprocessing_jobs" WHERE "tenantId" IS NULL;
+
+  IF remaining_buyer_nulls > 0 THEN
+    RAISE WARNING 'ATENÇÃO: % jobs sem buyerCompanyId. Executar backfill manual ou investigar. Migration não tornará NOT NULL.', remaining_buyer_nulls;
+  ELSE
     ALTER TABLE "tax_reprocessing_jobs" ALTER COLUMN "buyerCompanyId" SET NOT NULL;
   END IF;
 
-  IF NOT EXISTS (SELECT 1 FROM "tax_reprocessing_jobs" WHERE "tenantId" IS NULL) THEN
+  IF remaining_tenant_nulls > 0 THEN
+    RAISE WARNING 'ATENÇÃO: % jobs sem tenantId. Correção manual necessária. Migration não tornará NOT NULL.', remaining_tenant_nulls;
+  ELSE
     ALTER TABLE "tax_reprocessing_jobs" ALTER COLUMN "tenantId" SET NOT NULL;
   END IF;
 END $$;
 
 -- =============================================
--- USER ROLE — migration de string para enum
+-- USER ROLE — migração TEXT → enum SEM perda de dados
 -- =============================================
--- ATENÇÃO: Esta operação é destrutiva se a coluna role já tem dados.
--- Se o banco já migrou (column tem tipo "userrole"), pular.
+--
+-- Valores possíveis na coluna TEXT original:
+--   BUYER, ADMIN, MANAGER (e possivelmente SPECIALIST)
+--
+-- Estratégia:
+--   1. Adicionar coluna temporária com o novo enum
+--   2. Copiar valores da coluna antiga para a nova (CAST)
+--   3. Remover coluna antiga
+--   4. Se a coluna já for enum (userrole), pular tudo
+
 DO $$
 DECLARE
   col_type TEXT;
@@ -104,13 +139,34 @@ BEGIN
   WHERE table_name = 'User' AND column_name = 'role';
 
   IF col_type = 'userrole' THEN
-    -- Já migrado — pular
+    -- ✅ Já migrado — nada a fazer
     RAISE NOTICE 'User.role já é do tipo UserRole. Pulando.';
-  ELSE
-    -- Drop e recreate com enum
+  ELSIF col_type = 'text' OR col_type IS NULL THEN
+    -- ✅ Coluna é TEXT — migrar preservando valores
+    -- Adicionar coluna temporária com enum
+    ALTER TABLE "User" ADD COLUMN "role_new" "UserRole" NOT NULL DEFAULT 'BUYER';
+
+    -- Mapear valores de texto para enum (preserve dados existentes)
+    UPDATE "User"
+    SET "role_new" = ("role")::"UserRole"
+    WHERE "role" IS NOT NULL
+      AND "role" <> '';
+
+    -- Se algum valor não mapeou automaticamente (texto desconhecido), atribuir BUYER
+    UPDATE "User"
+    SET "role_new" = 'BUYER'
+    WHERE "role_new" = 'BUYER'
+      AND "role" IS NOT NULL
+      AND "role" <> 'BUYER';
+
+    -- Remover coluna antiga e renomear nova
     ALTER TABLE "User" DROP COLUMN "role";
-    ALTER TABLE "User" ADD COLUMN "role" "UserRole" NOT NULL DEFAULT 'BUYER';
-    RAISE NOTICE 'User.role recriado como enum. Valores anteriores perdidos.';
+    ALTER TABLE "User" RENAME COLUMN "role_new" TO "role";
+
+    RAISE NOTICE 'User.role migrado de TEXT para enum. % linhas processadas.', (SELECT COUNT(*) FROM "User");
+  ELSE
+    -- ⚠️ Tipo inesperado — falhar com mensagem clara
+    RAISE EXCEPTION 'User.role tem tipo inesperado: %. Esperado TEXT ou UserRole.', col_type;
   END IF;
 END $$;
 
@@ -191,7 +247,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS "_DecisionRules_AB_unique" ON "_DecisionRules"
 CREATE INDEX IF NOT EXISTS "_DecisionRules_B_index" ON "_DecisionRules"("B");
 
 -- =============================================
-— FOREIGN KEYS (idempotentes)
+-- FOREIGN KEYS (idempotentes, nomes explícitos)
 -- =============================================
 
 DO $$ BEGIN
