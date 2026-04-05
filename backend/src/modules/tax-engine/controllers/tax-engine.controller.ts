@@ -20,7 +20,7 @@ export class TaxEngineController {
   @Post('quotes/:id/tax-snapshot')
   async createSnapshot(@Param('id') id: string, @Body() dto: CalculateQuoteTaxDto) {
     const result = await this.taxEngineService.calculate(dto);
-    return this.taxEngineService.saveSnapshot(id, result, TAX_ENGINE_VERSION);
+    return this.taxEngineService.saveSnapshot(id, result, TAX_ENGINE_VERSION, dto);
   }
 
   @Get('quotes/:id/tax-snapshots')
@@ -61,6 +61,6 @@ export class TaxEngineController {
     };
 
     const result = await this.taxEngineService.calculate(dto);
-    return this.taxEngineService.saveSnapshot(quoteId, result, TAX_ENGINE_VERSION);
+    return this.taxEngineService.saveSnapshot(quoteId, result, TAX_ENGINE_VERSION, dto);
   }
 }

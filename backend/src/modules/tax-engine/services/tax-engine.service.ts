@@ -8,6 +8,7 @@ import { CofinsCalculator } from './calculators/cofins.calculator';
 import { IpiCalculator } from './calculators/ipi.calculator';
 import { TaxMemoryMapper } from './mappers/tax-memory.mapper';
 import { PrismaService } from '../../../prisma.service'; 
+import { TaxHashUtil } from '../utils/tax-hash.util';
 
 @Injectable()
 export class TaxEngineService {
@@ -64,6 +65,19 @@ export class TaxEngineService {
         ...ipi.legalBasis,
       ],
       memory: this.taxMemoryMapper.build(ctx, gross, [icms, pis, cofins, ipi]),
+      governance: {
+        confidenceLevel: 'VALIDATED_BY_REGISTRATION', // Exemplo básico já que só calcula com DB hit validation
+        calculationStatus: 'SUCCESS',
+        ruleCodes: ['REGRA_ICMS_BASE', 'REGRA_PIS_BASE', 'REGRA_COFINS_BASE', 'REGRA_IPI_BASE'],
+        decisionSummary: {
+           disallowedCredits: {
+             icms: icms.disallowedReasons.length ? icms.disallowedReasons : undefined,
+             pis: pis.disallowedReasons.length ? pis.disallowedReasons : undefined,
+             cofins: cofins.disallowedReasons.length ? cofins.disallowedReasons : undefined,
+             ipi: ipi.disallowedReasons.length ? ipi.disallowedReasons : undefined,
+           }
+        }
+      }
     };
 
     return result as any;
@@ -106,11 +120,19 @@ export class TaxEngineService {
     };
   }
 
-  async saveSnapshot(quoteId: string, result: TaxCalculationResultDto, version: string) {
-    return this.prisma.quoteTaxSnapshot.create({
+  async saveSnapshot(quoteId: string, result: TaxCalculationResultDto, version: string, inputDto: CalculateQuoteTaxDto) {
+    const auditMeta = TaxHashUtil.generateDeterministicHash(inputDto);
+
+    const snapshot = await this.prisma.quoteTaxSnapshot.create({
       data: {
         quoteId,
         engineVersion: version,
+        
+        // Trilha de Auditoria Fase 2
+        inputJson: auditMeta.inputJson,
+        inputHash: auditMeta.hash,
+        hashAlgorithm: auditMeta.algorithm,
+        hashSchemaVersion: auditMeta.version,
         grossCostUnit: result.grossCostUnit,
         grossCostTotal: result.grossCostTotal,
         netCostUnit: result.netCostUnit,
@@ -119,10 +141,28 @@ export class TaxEngineService {
         pisCredit: result.credits.pis,
         cofinsCredit: result.credits.cofins,
         ipiCredit: result.credits.ipi,
+        
+        confidenceLevel: result.governance.confidenceLevel as any,
+        calculationStatus: result.governance.calculationStatus as any,
+        decisionSummaryJson: result.governance.decisionSummary || {},
+        ruleCodesJson: result.governance.ruleCodes || [],
         legalBasisJson: result.legalBasis || [],
-        disallowedCreditsJson: result.disallowedCredits || {},
         memoryJson: result.memory || {}
       }
     });
+    
+    // Sincroniza a Quote atual projetada com os dados do snapshot gerado
+    await this.prisma.quote.update({
+      where: { id: quoteId },
+      data: {
+        taxConfidenceLevel: snapshot.confidenceLevel,
+        taxCalculationStatus: snapshot.calculationStatus,
+        lastTaxSnapshotId: snapshot.id,
+        lastTaxCalculatedAt: snapshot.calculatedAt,
+        lastTaxEngineVersion: snapshot.engineVersion
+      }
+    });
+
+    return snapshot;
   }
 }

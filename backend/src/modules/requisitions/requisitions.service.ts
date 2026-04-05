@@ -135,7 +135,7 @@ export class RequisitionsService {
         freight: q.freight || 0,
         leadTime: q.leadTime || 0,
         paymentTerms: q.paymentTerms || '',
-        itemUseType: taxCtx.itemUseType as ItemUseType, // Persiste o tipo usado no cálculo
+        itemUseType: dto.item.itemUseType as ItemUseType, // Persiste o tipo usado no cálculo
         ipiRate: q.ipiRate || 0,
         icmsRate: q.icmsRate || 0,
         pisRate: q.pisRate || 0,
@@ -146,6 +146,8 @@ export class RequisitionsService {
         creditCofins: taxResult.credits.cofins,
         netCost: taxResult.netCostTotal / (requisition.quantity || 1),
         taxMemory: taxResult.memory as any,
+        taxConfidenceLevel: taxResult.governance.confidenceLevel as any,
+        taxCalculationStatus: taxResult.governance.calculationStatus as any,
         isSelected: q.isSelected
       };
     }));
