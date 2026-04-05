@@ -3,12 +3,14 @@ import { Type } from 'class-transformer';
 
 class TaxItemDto {
   @IsNumber()
+  @Min(0.0001)
   quantity: number;
 
   @IsNumber()
+  @Min(0)
   unitPrice: number;
 
-  @IsOptional() @IsNumber()
+  @IsOptional() @IsNumber() @Min(0)
   totalFreight?: number;
 
   @IsIn(['RESALE', 'INDUSTRIAL_INPUT', 'CONSUMPTION', 'FIXED_ASSET'])
