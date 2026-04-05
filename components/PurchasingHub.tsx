@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Requisition, Status, SupplierQuote, Company } from '../types';
+import { Requisition, Status, SupplierQuote, Company, TaxCalculationResultDto } from '../types';
 import { StatusBadge, PriorityBadge } from './StatusBadge';
 import { 
   Play, DollarSign, Ban, Trash2, Trophy, 
@@ -8,6 +8,7 @@ import {
   Sparkles, ShieldCheck, PieChart, MousePointer2, Briefcase, Landmark
 } from 'lucide-react';
 import { CurrencyInput } from './CurrencyInput';
+import { taxApi } from '../services/taxApi';
 
 interface PurchasingHubProps {
   requisitions: Requisition[];
@@ -26,6 +27,12 @@ export const PurchasingHub: React.FC<PurchasingHubProps> = ({ requisitions, onUp
   const [buyer, setBuyer] = useState<Company | null>(null);
   const [showSavingModal, setShowSavingModal] = useState<boolean>(false);
   const [negotiatedPrice, setNegotiatedPrice] = useState<number>(0);
+  
+  // Tax Engine state
+  const [taxResult, setTaxResult] = useState<TaxCalculationResultDto | null>(null);
+  const [taxError, setTaxError] = useState<string | null>(null);
+  const [isCalculatingTax, setIsCalculatingTax] = useState(false);
+  const [showMemory, setShowMemory] = useState(false);
   
   // Filtros e Paginação da Fila
   const [statusFilter, setStatusFilter] = useState<Status | 'Pendentes'>('Pendentes');
@@ -105,41 +112,53 @@ export const PurchasingHub: React.FC<PurchasingHubProps> = ({ requisitions, onUp
     });
   };
 
-  const calculateTco = (req: Requisition, quote: SupplierQuote) => {
-    const base = quote.price || 0;
-    const freight = (quote.freight || 0) / (req.quantity || 1);
-    const ipi = base * ((quote.ipiRate || 0)/100);
-    // ICMS sempre calculado (nominal), mas o crédito depende do regime (backend resolve o crédito real)
-    const icms = base * ((quote.icmsRate || 0)/100);
-    const pis = base * ((quote.pisRate || 0)/100);
-    const cofins = base * ((quote.cofinsRate || 0)/100);
+  useEffect(() => {
+    const calculateTaxesAsync = async () => {
+      const sReq = requisitions.find(r => r.id === selectedReqId);
+      const aQuotes = localQuotes[selectedReqId || ''] || [];
+      const aQuote = aQuotes[activeSuppIdx];
+      
+      if (!sReq || !aQuote || !buyer || !aQuote.companyId) {
+         setTaxResult(null);
+         return;
+      }
+      
+      setTaxError(null);
+      setIsCalculatingTax(true);
+      try {
+        const payload = {
+          buyerCompanyId: buyer.id,
+          supplierCompanyId: aQuote.companyId,
+          item: {
+            quantity: sReq.quantity || 1,
+            unitPrice: aQuote.price || 0,
+            totalFreight: aQuote.freight || 0,
+            itemUseType: aQuote.itemUseType || sReq.itemUseType || 'INDUSTRIAL_INPUT',
+            creditNature: 'OTHER',
+            operationType: 'INTERNAL',
+            ipiRate: aQuote.ipiRate || 0,
+            icmsRate: aQuote.icmsRate || 0,
+            pisRate: aQuote.pisRate || 0,
+            cofinsRate: aQuote.cofinsRate || 0,
+            hasIcmsSt: aQuote.hasIcmsSt || false,
+          }
+        };
+        const result = await taxApi.calculateQuote(payload);
+        setTaxResult(result);
+      } catch (err: any) {
+        console.error("Erro ao calcular impostos", err);
+        setTaxResult(null);
+        setTaxError(err?.response?.data?.message || err?.message || "Erro de validação fiscal");
+      } finally {
+        setIsCalculatingTax(false);
+      }
+    };
     
-    // Custo Bruto (Saída de Caixa): Preço + Frete + IPI (ICMS/PIS/COFINS já estão no preço base no padrão BR)
-    const gross = base + freight + ipi;
-    
-    // Se for Uso e Consumo, não gera crédito nenhum
-    if (isConsumption) {
-       return { gross, net: gross, credits: 0 };
-    }
-
-    // Créditos Estimados
-    let credits = 0;
-    
-    // 1. ICMS: Lucro Real ou Presumido (exceto Simples)
-    if (buyer?.taxRegime === 'REAL' || buyer?.taxRegime === 'PRESUMIDO') {
-       credits += icms;
-    }
-
-    // 2. PIS/COFINS: Apenas Lucro Real e Fornecedor não Simples
-    if (buyer?.taxRegime === 'REAL') {
-       const supplier = suppliers.find(s => s.id === quote.companyId);
-       if (supplier?.taxRegime !== 'SIMPLES') {
-          credits += pis + cofins;
-       }
-    }
-    
-    return { gross, net: gross - credits, credits };
-  };
+    const timer = setTimeout(() => {
+      calculateTaxesAsync();
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [requisitions, localQuotes, activeSuppIdx, selectedReqId, buyer]);
 
   const formatCurrency = (val: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
 
@@ -149,7 +168,6 @@ export const PurchasingHub: React.FC<PurchasingHubProps> = ({ requisitions, onUp
   const winner = activeQuotes.find(q => q.isSelected);
 
   const activeSupplier = suppliers.find(s => s.id === activeQuote?.companyId);
-  const isSimplesSupplier = activeSupplier?.taxRegime === 'SIMPLES';
   
   const currentUseType = activeQuote?.itemUseType || selectedReq?.itemUseType || 'INDUSTRIAL_INPUT';
   const isConsumption = currentUseType === 'CONSUMPTION';
@@ -314,20 +332,12 @@ export const PurchasingHub: React.FC<PurchasingHubProps> = ({ requisitions, onUp
                                <CurrencyInput label="ICMS (%)" prefix="" value={isConsumption ? 0 : (activeQuote?.icmsRate || 0)} onChange={(v) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'icmsRate', v)} color="amber" />
                             </div>
                             <div className="grid grid-cols-2 gap-8 relative">
-                               <div className={isSimplesSupplier ? "opacity-50 pointer-events-none grayscale" : ""}>
-                                  <CurrencyInput label="PIS (%)" prefix="" value={(isSimplesSupplier || isConsumption) ? 0 : (activeQuote?.pisRate || 0)} onChange={(v) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'pisRate', v)} color="amber" />
+                               <div>
+                                  <CurrencyInput label="PIS (%)" prefix="" value={isConsumption ? 0 : (activeQuote?.pisRate || 0)} onChange={(v) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'pisRate', v)} color="amber" />
                                </div>
-                               <div className={isSimplesSupplier ? "opacity-50 pointer-events-none grayscale" : ""}>
-                                  <CurrencyInput label="COFINS (%)" prefix="" value={(isSimplesSupplier || isConsumption) ? 0 : (activeQuote?.cofinsRate || 0)} onChange={(v) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'cofinsRate', v)} color="amber" />
+                               <div>
+                                  <CurrencyInput label="COFINS (%)" prefix="" value={isConsumption ? 0 : (activeQuote?.cofinsRate || 0)} onChange={(v) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'cofinsRate', v)} color="amber" />
                                </div>
-                               
-                               {isSimplesSupplier && !isConsumption && (
-                                 <div className="absolute inset-0 flex items-center justify-center z-10">
-                                    <div className="bg-amber-100 text-amber-800 text-[10px] font-bold px-3 py-1.5 rounded-full shadow-sm border border-amber-200 flex items-center gap-2">
-                                       <Ban className="w-3 h-3" /> Fornecedor Simples Nacional (Não gera crédito)
-                                    </div>
-                                 </div>
-                               )}
                             </div>
                         </div>
 
@@ -337,9 +347,57 @@ export const PurchasingHub: React.FC<PurchasingHubProps> = ({ requisitions, onUp
                               <p>Material de <span className="text-slate-700 font-black">Uso e Consumo</span> não gera crédito tributário.</p>
                            </div>
                         )}
-                        <div className="bg-amber-50/50 p-6 rounded-[2.5rem] border border-amber-100/50 text-[10px] font-bold text-amber-800/70 flex items-center gap-4 italic leading-relaxed">
-                           <Info className="w-6 h-6 flex-shrink-0 text-amber-500" />
-                           O Motor Fiscal processa os créditos automaticamente com base no perfil do comprador {buyer?.name || 'RA Polymers'}.
+                        <div className="bg-amber-50/50 p-6 rounded-[2.5rem] border border-amber-100/50 flex flex-col gap-4">
+                           <div className="flex items-center gap-4 text-[10px] font-bold text-amber-800/70 italic leading-relaxed">
+                              <Info className="w-6 h-6 flex-shrink-0 text-amber-500" />
+                              O Motor Fiscal processa os créditos automaticamente com base no perfil do comprador {buyer?.name || 'RA Polymers'}.
+                           </div>
+                           
+                           {taxResult && (
+                              <div className="mt-4 border-t border-amber-200/50 pt-4">
+                                 <button 
+                                   onClick={() => setShowMemory(!showMemory)}
+                                   className="text-[10px] font-black uppercase text-amber-700 hover:text-amber-900 transition-colors flex items-center gap-2 outline-none"
+                                 >
+                                   <Receipt className="w-4 h-4"/> 
+                                   {showMemory ? 'Ocultar Memória Fiscal' : 'Exibir Memória Fiscal'}
+                                 </button>
+                                 {showMemory && (
+                                   <div className="mt-4 bg-white/80 rounded-2xl p-4 text-xs font-medium text-slate-600 shadow-sm animate-in fade-in slide-in-from-top-2">
+                                     <p className="font-bold mb-2 uppercase text-[9px] text-slate-400 tracking-widest">Créditos Calculados</p>
+                                     <ul className="space-y-1 mb-4 flex flex-col gap-1">
+                                        <li className="flex justify-between items-center bg-slate-50 px-3 py-1.5 rounded-lg"><span>ICMS:</span> <span className="font-bold text-emerald-600">{formatCurrency(taxResult.credits.icms)}</span></li>
+                                        <li className="flex justify-between items-center bg-slate-50 px-3 py-1.5 rounded-lg"><span>PIS:</span> <span className="font-bold text-emerald-600">{formatCurrency(taxResult.credits.pis)}</span></li>
+                                        <li className="flex justify-between items-center bg-slate-50 px-3 py-1.5 rounded-lg"><span>COFINS:</span> <span className="font-bold text-emerald-600">{formatCurrency(taxResult.credits.cofins)}</span></li>
+                                        <li className="flex justify-between items-center bg-slate-50 px-3 py-1.5 rounded-lg"><span>IPI:</span> <span className="font-bold text-emerald-600">{formatCurrency(taxResult.credits.ipi)}</span></li>
+                                     </ul>
+                                     <p className="font-bold mb-2 uppercase text-[9px] text-slate-400 tracking-widest">Base Legal & Vetos</p>
+                                     <div className="space-y-2 text-[10px]">
+                                       {taxResult.legalBasis.map((base, idx) => (
+                                          <div key={idx} className="bg-emerald-50 text-emerald-700 px-2 py-1 rounded">✓ {base}</div>
+                                       ))}
+                                       {Object.entries(taxResult.disallowedCredits || {}).map(([tax, reasons]) => 
+                                          reasons && (reasons as string[]).map((r, i) => (
+                                            <div key={`${tax}-${i}`} className="bg-rose-50 text-rose-700 px-2 py-1 rounded">✕ [{tax.toUpperCase()}] {r}</div>
+                                          ))
+                                       )}
+                                       {(!taxResult.legalBasis.length && !Object.keys(taxResult.disallowedCredits || {}).length) && (
+                                         <p className="text-slate-400 italic">Sem registros complementares.</p>
+                                       )}
+                                     </div>
+                                   </div>
+                                 )}
+                              </div>
+                           )}
+                           {taxError && (
+                              <div className="mt-4 bg-rose-50 border border-rose-200 text-rose-700 text-xs p-4 rounded-2xl flex flex-col gap-2 shadow-sm animate-in fade-in">
+                                 <div className="flex items-center gap-2 font-black uppercase tracking-widest text-[10px]">
+                                    <Ban className="w-4 h-4" /> Erro de Cálculo Fiscal
+                                 </div>
+                                 <p className="font-semibold">{taxError}</p>
+                                 <p className="opacity-80 text-[10px]">Corrija os dados cadastrais antes de prosseguir com a eleição desta quota.</p>
+                              </div>
+                           )}
                         </div>
                      </div>
                   </div>
@@ -347,11 +405,11 @@ export const PurchasingHub: React.FC<PurchasingHubProps> = ({ requisitions, onUp
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-12 border-t border-slate-50">
                      <div className="bg-slate-900 p-10 rounded-[3.5rem] text-white flex flex-col items-center justify-center relative overflow-hidden group shadow-2xl shadow-slate-300">
                         <p className="text-[10px] font-black uppercase tracking-[0.3em] mb-2 opacity-50">Custo Bruto Unitário</p>
-                        <p className="text-4xl font-black tracking-tighter">{formatCurrency(calculateTco(selectedReq, activeQuote).gross)}</p>
+                        <p className="text-4xl font-black tracking-tighter">{isCalculatingTax ? '...' : formatCurrency(taxResult?.grossCostUnit || 0)}</p>
                      </div>
                      <div className="bg-emerald-600 p-10 rounded-[3.5rem] text-white flex flex-col items-center justify-center relative overflow-hidden group shadow-2xl shadow-emerald-200 border-b-8 border-emerald-700">
                         <p className="text-[10px] font-black uppercase tracking-[0.3em] mb-2 opacity-70">Custo Líquido (Net Cost)</p>
-                        <p className="text-5xl font-black tracking-tighter">{formatCurrency(calculateTco(selectedReq, activeQuote).net)}</p>
+                        <p className="text-5xl font-black tracking-tighter">{isCalculatingTax ? '...' : formatCurrency(taxResult?.netCostUnit || 0)}</p>
                         <button onClick={() => { handleLocalUpdate(selectedReq.id, activeSuppIdx, 'isSelected', true); setNegotiatedPrice(activeQuote.price); setShowSavingModal(true); }} disabled={!activeQuote?.companyId || !activeQuote?.price} className={`mt-10 w-full py-5 rounded-[2rem] font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 transition-all ${activeQuote?.isSelected ? 'bg-amber-400 text-slate-900 shadow-xl' : 'bg-white text-emerald-700 hover:scale-[1.02] active:scale-95 disabled:opacity-50'}`}><Trophy className="w-5 h-5" /> {activeQuote?.isSelected ? 'Vencedor Confirmado' : 'Eleger Melhor TCO'}</button>
                      </div>
                   </div>
@@ -396,9 +454,30 @@ export const PurchasingHub: React.FC<PurchasingHubProps> = ({ requisitions, onUp
                      <div className="p-8 bg-slate-50 rounded-[3rem] border border-slate-100 text-center shadow-inner"><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Melhor Oferta</p><p className="text-3xl font-black text-slate-700 tracking-tighter">{formatCurrency(winner.price)}</p></div>
                      <CurrencyInput label="Negociado Final" value={negotiatedPrice} onChange={(v) => setNegotiatedPrice(v)} color="emerald" />
                   </div>
-                  <div className="bg-emerald-600 p-10 rounded-[3.5rem] text-white flex flex-col gap-3 relative overflow-hidden shadow-2xl shadow-emerald-200 border-b-8 border-emerald-700">
-                     <div className="flex justify-between items-center"><p className="text-[10px] font-black uppercase opacity-70 tracking-[0.3em]">Saving Comercial Absoluto</p><span className="bg-white/20 px-3 py-1 rounded-full text-[10px] font-black">-{Math.round(((winner.price - negotiatedPrice) / winner.price) * 100) || 0}%</span></div>
-                     <p className="text-5xl font-black tracking-tighter">{formatCurrency((winner.price - negotiatedPrice) * selectedReq.quantity)}</p>
+                  <div className="grid grid-cols-3 gap-6">
+                     <div className="p-6 bg-slate-50 border border-slate-100 rounded-[2rem] flex flex-col items-center justify-center text-center shadow-inner relative overflow-hidden group">
+                        <p className="text-[9px] font-black uppercase tracking-[0.2em] mb-1 opacity-50 z-10">Saving Comercial</p>
+                        <p className="text-[8px] italic opacity-60 mb-2 z-10">Melhor vs Negociado</p>
+                        <p className="text-xl font-black text-slate-800 z-10">{formatCurrency((winner.price - negotiatedPrice) * selectedReq.quantity)}</p>
+                        <div className="absolute -bottom-10 -right-10 text-slate-200 opacity-50 group-hover:scale-110 transition-transform"><Building2 className="w-24 h-24" /></div>
+                     </div>
+                     <div className="p-6 bg-blue-50 border border-blue-100 rounded-[2rem] flex flex-col items-center justify-center text-center shadow-inner relative overflow-hidden group">
+                        <p className="text-[9px] font-black uppercase tracking-[0.2em] mb-1 text-blue-500 z-10">Saving Fiscal</p>
+                        <p className="text-[8px] italic text-blue-400 opacity-80 mb-2 z-10">Soma de Créditos Validados</p>
+                        <p className="text-xl font-black text-blue-700 z-10">{formatCurrency(taxResult ? (taxResult.credits.icms + taxResult.credits.pis + taxResult.credits.cofins + taxResult.credits.ipi) * selectedReq.quantity : 0)}</p>
+                        <div className="absolute -bottom-10 -right-10 text-blue-200 opacity-40 group-hover:scale-110 transition-transform"><Landmark className="w-24 h-24" /></div>
+                     </div>
+                     <div className="p-6 bg-emerald-600 rounded-[2rem] text-white flex flex-col items-center justify-center text-center shadow-2xl relative overflow-hidden group border-b-4 border-emerald-700">
+                        <p className="text-[9px] font-black uppercase tracking-[0.2em] mb-1 opacity-80 z-10">Saving Efetivo</p>
+                        <p className="text-[8px] italic opacity-60 mb-2 z-10">Custo Líquido Final</p>
+                        <p className="text-2xl font-black z-10">
+                           {formatCurrency(
+                             ((winner.price - negotiatedPrice) * selectedReq.quantity) + 
+                             (taxResult ? (taxResult.credits.icms + taxResult.credits.pis + taxResult.credits.cofins + taxResult.credits.ipi) * selectedReq.quantity : 0)
+                           )}
+                        </p>
+                        <div className="absolute -bottom-6 -right-6 text-emerald-500 opacity-50 group-hover:scale-110 transition-transform"><Trophy className="w-20 h-20" /></div>
+                     </div>
                   </div>
                </div>
                <div className="mt-14 flex gap-6">

@@ -27,17 +27,27 @@ export class IcmsCalculator {
     let base = (ctx.item.unitPrice + (ctx.item.totalFreight || 0) / ctx.item.quantity) * ctx.item.quantity;
 
     if (ctx.supplier.regime === 'SIMPLES') {
-      defaultResult.legalBasis.push('LC 123/2006 Art. 23');
-    } else {
-      defaultResult.legalBasis.push('Operação Normal');
+      return this.evaluateSimplesIcmsCredit(ctx, defaultResult);
     }
 
-    defaultResult.eligible = true;
-    defaultResult.creditAmount = base * (rate / 100);
-    defaultResult.formula = 'base * rate / 100';
-    defaultResult.baseAmount = base;
-    defaultResult.rate = rate;
+    return this.evaluateNormalIcmsCredit(ctx, defaultResult, base, rate);
+  }
 
-    return defaultResult;
+  private evaluateSimplesIcmsCredit(ctx: TaxContext, result: TaxBranchResult): TaxBranchResult {
+    result.eligible = false;
+    result.creditAmount = 0;
+    result.disallowedReasons.push('Fornecedor do Simples exige validação específica do art. 23 e parâmetros/documento ainda não informados');
+    result.legalBasis.push('LC 123/2006 Art. 23');
+    return result;
+  }
+
+  private evaluateNormalIcmsCredit(ctx: TaxContext, result: TaxBranchResult, base: number, rate: number): TaxBranchResult {
+    result.legalBasis.push('Operação Normal');
+    result.eligible = true;
+    result.creditAmount = base * (rate / 100);
+    result.formula = 'base * rate / 100';
+    result.baseAmount = base;
+    result.rate = rate;
+    return result;
   }
 }

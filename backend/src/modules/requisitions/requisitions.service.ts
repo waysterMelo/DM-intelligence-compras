@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma.service';
-import { TaxCreditService, TaxContext } from '../tax-engine/tax-credit.service';
+import { TaxEngineService } from '../tax-engine/services/tax-engine.service';
 import { CompaniesService } from '../companies/companies.service';
 import { ItemUseType } from '@prisma/client';
 
@@ -8,7 +8,7 @@ import { ItemUseType } from '@prisma/client';
 export class RequisitionsService {
   constructor(
     private prisma: PrismaService,
-    private taxCreditService: TaxCreditService,
+    private taxEngineService: TaxEngineService,
     private companiesService: CompaniesService
   ) {}
 
@@ -109,21 +109,24 @@ export class RequisitionsService {
       const supplier = await this.prisma.fornecedor.findUnique({ where: { id: q.companyId } });
       if (!supplier) throw new Error("Fornecedor não encontrado");
 
-      const taxCtx: TaxContext = {
-        buyerRegime: buyer.taxRegime,
-        supplierRegime: supplier.taxRegime,
-        // Usa o tipo definido na cotação se houver, senão usa o da requisição, senão padrão
-        itemUseType: currentItemUseType,
-        price: q.price || 0,
-        quantity: requisition.quantity || 1,
-        freight: q.freight || 0,
-        ipiRate: q.ipiRate || 0,
-        icmsRate: q.icmsRate || 0,
-        pisRate: q.pisRate || 0,
-        cofinsRate: q.cofinsRate || 0
+      const dto = {
+        buyerCompanyId: buyer.id,
+        supplierCompanyId: supplier.id,
+        item: {
+          quantity: requisition.quantity || 1,
+          unitPrice: q.price || 0,
+          totalFreight: q.freight || 0,
+          itemUseType: currentItemUseType as any,
+          creditNature: q.creditNature || 'OTHER',
+          operationType: q.operationType || 'INTERNAL',
+          ipiRate: q.ipiRate || 0,
+          icmsRate: q.icmsRate || 0,
+          pisRate: q.pisRate || 0,
+          cofinsRate: q.cofinsRate || 0,
+        }
       };
 
-      const taxResult = this.taxCreditService.calculate(taxCtx);
+      const taxResult = await this.taxEngineService.calculate(dto);
 
       return {
         fornecedorId: q.companyId,
@@ -138,11 +141,11 @@ export class RequisitionsService {
         pisRate: q.pisRate || 0,
         cofinsRate: q.cofinsRate || 0,
         // Resultados do Motor Fiscal
-        creditIcms: taxResult.creditIcms,
-        creditPis: taxResult.creditPis,
-        creditCofins: taxResult.creditCofins,
-        netCost: taxResult.netCost,
-        taxMemory: taxResult.taxMemory as any,
+        creditIcms: taxResult.credits.icms,
+        creditPis: taxResult.credits.pis,
+        creditCofins: taxResult.credits.cofins,
+        netCost: taxResult.netCostTotal / (requisition.quantity || 1),
+        taxMemory: taxResult.memory as any,
         isSelected: q.isSelected
       };
     }));

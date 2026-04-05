@@ -19,7 +19,7 @@ export class IpiCalculator {
     }
 
     if (ctx.item.itemUseType !== 'INDUSTRIAL_INPUT') {
-      defaultResult.disallowedReasons.push('IPI exige uso e consumo como INSUMO INDUSTRIAL');
+      defaultResult.disallowedReasons.push('Crédito de IPI exige destinação como insumo industrial elegível');
       return defaultResult;
     }
 

@@ -43,6 +43,7 @@ export class PisCalculator {
     defaultResult.baseAmount = base;
     defaultResult.rate = rate;
     
+    defaultResult.legalBasis.push('versionScope: V1 structured estimate');
     return defaultResult;
   }
 }

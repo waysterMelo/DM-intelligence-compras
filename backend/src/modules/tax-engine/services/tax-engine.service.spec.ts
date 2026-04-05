@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { BadRequestException } from '@nestjs/common';
 import { TaxEngineService } from './tax-engine.service';
 import { GrossCostCalculator } from './calculators/gross-cost.calculator';
 import { IcmsCalculator } from './calculators/icms.calculator';
@@ -119,5 +120,10 @@ describe('TaxEngineService (Unit Tests)', () => {
     setupMockCompanies({ isIpiTaxpayer: false }, {});
     const res = await service.calculate({ buyerCompanyId: 'buyer', supplierCompanyId: 'supp', item: baseItem });
     expect(res.credits.ipi).toBe(0);
+  });
+
+  it('comprador omitindo campos estruturais -> levanta BadRequestException', async () => {
+    setupMockCompanies({ pisCofinsRegime: undefined }, {});
+    await expect(service.calculate({ buyerCompanyId: 'buyer', supplierCompanyId: 'supp', item: baseItem })).rejects.toThrow(BadRequestException);
   });
 });

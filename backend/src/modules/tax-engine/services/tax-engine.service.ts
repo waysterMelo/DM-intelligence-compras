@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { CalculateQuoteTaxDto } from '../dto/calculate-quote-tax.dto';
 import { TaxCalculationResultDto } from '../dto/tax-calculation-result.dto';
 import { GrossCostCalculator } from './calculators/gross-cost.calculator';
@@ -79,22 +79,28 @@ export class TaxEngineService {
     });
 
     if (!buyer || !supplier) {
-       throw new Error('Comprador ou Fornecedor não encontrados');
+       throw new BadRequestException('Comprador ou Fornecedor não encontrados na base de dados');
     }
+
+    if (!(buyer as any).pisCofinsRegime) throw new BadRequestException('Comprador sem configuração de regime PIS/COFINS');
+    if ((buyer as any).isIcmsTaxpayer === undefined) throw new BadRequestException('Comprador sem configuração de isIcmsTaxpayer');
+    if ((buyer as any).isIpiTaxpayer === undefined) throw new BadRequestException('Comprador sem configuração de isIpiTaxpayer');
+    if (!(buyer as any).state) throw new BadRequestException('Comprador sem estado (UF) configurado');
+    if (!(supplier as any).state) throw new BadRequestException('Fornecedor sem estado (UF) configurado');
 
     return {
       buyer: {
         id: buyer.id,
         regime: buyer.taxRegime,
-        pisCofinsRegime: (buyer as any).pisCofinsRegime || 'CUMULATIVE',
-        isIcmsTaxpayer: (buyer as any).isIcmsTaxpayer || false,
-        isIpiTaxpayer: (buyer as any).isIpiTaxpayer || false,
-        state: (buyer as any).state || 'SP'
+        pisCofinsRegime: (buyer as any).pisCofinsRegime,
+        isIcmsTaxpayer: (buyer as any).isIcmsTaxpayer,
+        isIpiTaxpayer: (buyer as any).isIpiTaxpayer,
+        state: (buyer as any).state
       },
       supplier: {
         id: supplier.id,
         regime: supplier.taxRegime,
-        state: (supplier as any).state || 'SP'
+        state: (supplier as any).state
       },
       item: dto.item
     };
