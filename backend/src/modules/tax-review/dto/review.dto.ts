@@ -1,5 +1,15 @@
 import { IsString, IsNotEmpty, IsOptional, IsEnum, IsObject } from 'class-validator';
 
+export enum ReviewReasonCode {
+  LOW_CONFIDENCE = 'LOW_CONFIDENCE',
+  BLOCKED = 'BLOCKED',
+  HIGH_TAX_DELTA = 'HIGH_TAX_DELTA',
+  RULE_CONFLICT = 'RULE_CONFLICT',
+  MANUAL_AUDIT_REQUESTED = 'MANUAL_AUDIT_REQUESTED',
+  DOCUMENT_MISMATCH = 'DOCUMENT_MISMATCH',
+  MISSING_CRITICAL_TAX_DATA = 'MISSING_CRITICAL_TAX_DATA'
+}
+
 export enum ReviewSeverity {
   LOW = 'LOW',
   MEDIUM = 'MEDIUM',
@@ -27,9 +37,13 @@ export class CreateReviewDto {
   @IsNotEmpty()
   quoteId: string;
 
-  @IsString()
+  @IsEnum(ReviewReasonCode)
   @IsNotEmpty()
-  reason: string;
+  reasonCode: ReviewReasonCode;
+
+  @IsString()
+  @IsOptional()
+  reasonText?: string;
 
   @IsEnum(ReviewSeverity)
   @IsOptional()

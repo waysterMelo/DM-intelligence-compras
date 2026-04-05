@@ -331,6 +331,16 @@ enum ReviewStatus {
   DISMISSED
 }
 
+enum ReviewReasonCode {
+  LOW_CONFIDENCE
+  BLOCKED
+  HIGH_TAX_DELTA
+  RULE_CONFLICT
+  MANUAL_AUDIT_REQUESTED
+  DOCUMENT_MISMATCH
+  MISSING_CRITICAL_TAX_DATA
+}
+
 enum ReviewOutcome {
   CALCULATION_ACCEPTED      // Especialista validou o cálculo automático
   CALCULATION_ADJUSTED      // Especialista ajustou manualmente os valores
@@ -339,31 +349,33 @@ enum ReviewOutcome {
 }
 
 model TaxReviewQueueItem {
-  id                String        @id @default(uuid())
-  tenantId          String        // Isolamento multi-tenant
-  quoteId           String        // Cotação em revisão
-  reason            String        // Motivo da abertura automática (ex: LOW_CONFIDENCE, BLOCKED, HIGH_TAX_DELTA)
+  id                String         @id @default(uuid())
+  tenantId          String         // Isolamento multi-tenant
+  quoteId           String         // Cotação em revisão
+  reasonCode        ReviewReasonCode // Código padronizado do motivo
+  reasonText        String?        // Descrição livre complementar (opcional)
   severity          ReviewSeverity @default(MEDIUM)
 
-  status            ReviewStatus  @default(OPEN)
-  assignedToUserId  String?       // Especialista responsável
-  resolvedByUserId  String?       // Quem resolveu
+  status            ReviewStatus   @default(OPEN)
+  assignedToUserId  String?        // Especialista responsável
+  resolvedByUserId  String?        // Quem resolveu
 
-  oldSnapshotId     String?       // Snapshot que gerou a revisão
-  newSnapshotId     String?       // Snapshot recalculado (se houver)
+  oldSnapshotId     String?        // Snapshot que gerou a revisão
+  newSnapshotId     String?        // Snapshot recalculado (se houver)
 
-  notes             String?       // Notas do especialista
-  resolutionNotes   String?       // Explicação da decisão
+  notes             String?        // Notas do especialista
+  resolutionNotes   String?        // Explicação da decisão
 
-  createdAt         DateTime      @default(now())
+  createdAt         DateTime       @default(now())
   assignedAt        DateTime?
   resolvedAt        DateTime?
 
-  quote             Quote          @relation(fields: [quoteId], references: [id])
+  quote             Quote           @relation(fields: [quoteId], references: [id])
   decisions         TaxReviewDecision[]
 
   @@index([tenantId, status])
   @@index([assignedToUserId, status])
+  @@index([reasonCode, severity])
   @@map("tax_review_queue_items")
 }
 
@@ -381,9 +393,15 @@ model TaxReviewDecision {
 
   outcome           ReviewOutcome
   adjustedValues    Json?           // Valores ajustados pelo especialista (se applicable)
-  explanation       String?         // Explicação do especialista
+  explanation       String?         // Explicação estruturada do especialista
+  reasonCode        ReviewReasonCode? // Código oficial vinculado à abertura
+  severityAtDecision String?        // Snapshot da severity no momento da decisão
   ruleCodes         String[]        // Códigos de regra aplicados
   legalBasisRef     String?         // Base legal citada
+
+  // Trilha auditável: snapshot do item no momento da decisão
+  itemStatusAtDecision String?      // Status do review item ao decidir
+  severitySnapshot  String?         // Severity do item ao decidir
 
   createdAt         DateTime        @default(now())
   createdByUserId   String
@@ -391,5 +409,38 @@ model TaxReviewDecision {
   reviewItem        TaxReviewQueueItem @relation(fields: [reviewItemId], references: [id], onDelete: Cascade)
   appliedRules      TaxRuleCatalog[]  @relation("DecisionRules")
 
+  @@index([tenantId, outcome])
+  @@index([reasonCode])
   @@map("tax_review_decisions")
+}
+
+// === FASE C — THRESHOLDS CONFIGURAVEIS E INTEGRACAO AUTOMATICA ===
+
+model TaxReviewThreshold {
+  id            String   @id @default(uuid())
+  tenantId      String   // Isolamento multi-tenant
+
+  // Gatilho para abertura automatica
+  triggerType   ReviewTriggerType  // BLOCKED, LOW_CONFIDENCE, HIGH_TAX_DELTA, RULE_CONFLICT, MISSING_DATA
+
+  // Parametros de threshold
+  minTaxAmount  Float?   // Valor minimo de imposto para acionar review (null = sempre)
+  deltaPercent  Float?   // Delta fiscal percentual para acionar review (null = nao aplicavel)
+  severity      ReviewSeverity @default(MEDIUM)  // Severidade default para este trigger
+
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([tenantId, triggerType])
+  @@map("tax_review_thresholds")
+}
+
+enum ReviewTriggerType {
+  BLOCKED
+  LOW_CONFIDENCE
+  HIGH_TAX_DELTA
+  RULE_CONFLICT
+  MISSING_DATA
+  MANUAL_REQUEST
 }

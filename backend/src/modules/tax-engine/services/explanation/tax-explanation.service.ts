@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { TaxContext } from '../../interfaces/tax-context.interface';
+import { RuleMatchResult } from '../rule-engine/tax-rule.engine';
 
 export interface TaxExplanationLine {
   tax: string;                  // ICMS, PIS, COFINS, IPI
@@ -8,7 +9,7 @@ export interface TaxExplanationLine {
   creditAmount: number;
   eligible: boolean;
   reason: string;               // Explicação legível
-  legalBasis: string[];
+  legalBasis: string[];         // Referências padronizadas (CODE — Nome)
   ruleCode: string;
 }
 
@@ -19,13 +20,19 @@ export interface TaxExplanation {
   grossCost: number;
   netCost: number;
   blocked: boolean;
-  blockReason?: string;
+  blockReason?: string;         // Resumo claro do bloqueio
+  maxSeverity: string;          // BLOCKING | WARNING | INFO
+  ruleCodes: string[];
 }
 
 /**
  * TaxExplanationService — gera explicação consistente e legível do cálculo fiscal.
  *
- * Transforma o resultado técnico em linguagem natural para auditores e compradores.
+ * Garante que:
+ * - Resumo e linhas por tributo não se contradigam
+ * - Detecção de bloqueio é baseada em severidade BLOCKING
+ * - Linguagem é padronizada
+ * - legalBasis é sempre referências estruturadas, nunca texto livre
  */
 @Injectable()
 export class TaxExplanationService {
@@ -46,12 +53,14 @@ export class TaxExplanationService {
     }[],
     grossCost: { grossCostUnit: number; grossCostTotal: number },
     ruleCodes: string[],
-    legalBasis: string[]
+    legalBasis: string[],
+    maxSeverity: string = 'INFO'
   ): TaxExplanation {
     const lines: TaxExplanationLine[] = [];
     let totalCredits = 0;
-    let blocked = false;
-    let blockReason: string | undefined;
+
+    // === Determinar bloqueio pela severidade máxima ===
+    const blocked = maxSeverity === 'BLOCKING';
 
     for (const branch of branches) {
       const reason = this.explainBranch(branch, ctx);
@@ -69,18 +78,16 @@ export class TaxExplanationService {
       if (branch.eligible) {
         totalCredits += branch.creditAmount;
       }
-
-      if (!branch.eligible && branch.disallowedReasons?.length) {
-        // Verifica se é bloqueio total
-        if (branch.tax === 'ICMS' && branch.creditAmount === 0) {
-          blocked = true;
-          blockReason = branch.disallowedReasons[0];
-        }
-      }
     }
 
     const netCost = grossCost.grossCostTotal - totalCredits;
-    const summary = this.buildSummary(ctx, lines, totalCredits, grossCost, netCost, blocked);
+
+    // Block reason: derivado das linhas bloqueantes, nunca genérico
+    const blockReason = blocked ? this.findBlockReason(lines, ctx) : undefined;
+
+    const summary = this.buildSummary(
+      ctx, lines, totalCredits, grossCost, netCost, blocked, blockReason, maxSeverity
+    );
 
     return {
       summary,
@@ -89,30 +96,48 @@ export class TaxExplanationService {
       grossCost: grossCost.grossCostTotal,
       netCost,
       blocked,
-      blockReason
+      blockReason,
+      maxSeverity,
+      ruleCodes
     };
   }
 
+  /**
+   * Encontra a razão específica do bloqueio nas linhas.
+   * Se não houver, retorna mensagem genérica com instrução de ação.
+   */
+  private findBlockReason(lines: TaxExplanationLine[], ctx: TaxContext): string {
+    // Primeiro: buscar explicação concreta de tributo bloqueante
+    for (const line of lines) {
+      if (!line.eligible && line.creditAmount === 0) {
+        return `Bloqueio fiscal: ${this.taxFullName(line.tax)} — ${line.reason}`;
+      }
+    }
+    // Fallback operacional
+    return 'Bloqueio fiscal ativo. Revise os parâmetros da operação ou consulte um especialista.';
+  }
+
   private explainBranch(
-    branch: { tax: string; eligible: boolean; creditAmount: number; disallowedReasons?: string[] },
+    branch: { tax: string; eligible: boolean; creditAmount: number; disallowedReasons?: string[]; rate?: number },
     ctx: TaxContext
   ): string {
     const taxName = this.taxFullName(branch.tax);
+    const rateStr = branch.rate !== undefined ? ` (alíquota ${branch.rate}%)` : '';
 
     if (branch.eligible && branch.creditAmount > 0) {
-      return `Crédito de ${taxName} de R$ ${branch.creditAmount.toFixed(2)} é aproveitável. ` +
+      return `Crédito de ${taxName}${rateStr}: R$ ${branch.creditAmount.toFixed(2)} — aproveitável. ` +
         `Regime do fornecedor: ${ctx.supplier.regime}. ` +
         `Natureza: ${ctx.item.creditNature || 'N/A'}.`;
     }
 
     if (branch.eligible && branch.creditAmount === 0) {
-      return `${taxName} não gera crédito nesta operação. ` +
+      return `${taxName}: não gera crédito${rateStr} nesta configuração. ` +
         `Regime: ${ctx.supplier.regime}, Uso: ${ctx.item.itemUseType}.`;
     }
 
     if (!branch.eligible) {
-      const reasons = branch.disallowedReasons?.join('; ') || 'Não elegível por regras fiscais.';
-      return `Crédito de ${taxName} NÃO elegível: ${reasons}`;
+      const reasons = branch.disallowedReasons?.join('; ') || 'Não elegível por regras fiscais aplicáveis.';
+      return `${taxName} — crédito não elegível: ${reasons}`;
     }
 
     return `${taxName}: cálculo realizado sem crédito direto.`;
@@ -124,29 +149,42 @@ export class TaxExplanationService {
     totalCredits: number,
     grossCost: { grossCostTotal: number },
     netCost: number,
-    blocked: boolean
+    blocked: boolean,
+    blockReason: string | undefined,
+    maxSeverity: string
   ): string {
-    const supplier = (ctx as any).supplierName || 'Fornecedor';
     const eligibleCount = lines.filter(l => l.eligible && l.creditAmount > 0).length;
     const disallowedCount = lines.filter(l => !l.eligible).length;
 
-    let summary = `Cálculo fiscal para compra com ${supplier}. `;
-    summary += `Custo bruto total: R$ ${grossCost.grossCostTotal.toFixed(2)}. `;
+    // === Consistência: resumo deve refletir linhas, nunca divergir ===
+    let summary = '';
 
     if (blocked) {
-      summary += `ATENÇÃO: Cálculo BLOQUEADO por restrição fiscal. `;
-      summary += `Revise os parâmetros da operação antes de prosseguir.`;
-    } else if (totalCredits > 0) {
-      summary += `Foram identificados R$ ${totalCredits.toFixed(2)} em créditos fiscais `;
-      summary += `(${eligibleCount} tributo(s) com crédito aproveitável`;
-      if (disallowedCount > 0) {
-        summary += `, ${disallowedCount} tributo(s) sem crédito`;
+      summary += 'Cálculo BLOQUEADO por restrição fiscal. ';
+      summary += (blockReason ? `${blockReason} ` : 'Revise os parâmetros da operação. ')
+      summary += `É necessária intervenção de especialista para prosseguir.`;
+    } else if (maxSeverity === 'WARNING') {
+      summary += `Cálculo fiscal realizado com observações. `;
+      summary += `Custo bruto: R$ ${grossCost.grossCostTotal.toFixed(2)}. `;
+      if (totalCredits > 0) {
+        summary += `Créditos identificados: R$ ${totalCredits.toFixed(2)} `;
+        summary += `(${eligibleCount} tributo(s) com crédito).`;
       }
-      summary += `). Custo líquido estimado: R$ ${netCost.toFixed(2)}.`;
-    } else {
-      summary += `Nenhum crédito fiscal identificado nesta operação.`;
       if (disallowedCount > 0) {
-        summary += ` ${disallowedCount} tributo(s) tiveram crédito não elegível.`;
+        summary += ` ${disallowedCount} tributo(s) sem crédito elegível — revisar se aplicável.`;
+      }
+      if (totalCredits <= 0 && disallowedCount === 0) {
+        summary += `Nenhum crédito fiscal identificado.`;
+      }
+    } else {
+      // INFO — cenário normal
+      summary += `Cálculo fiscal validado. `;
+      summary += `Custo bruto: R$ ${grossCost.grossCostTotal.toFixed(2)}. `;
+      if (totalCredits > 0) {
+        summary += `Créditos fiscais: R$ ${totalCredits.toFixed(2)}. `;
+        summary += `Custo líquido: R$ ${netCost.toFixed(2)}.`;
+      } else {
+        summary += `Nenhum crédito fiscal identificado nesta operação.`;
       }
     }
 
@@ -155,10 +193,10 @@ export class TaxExplanationService {
 
   private taxFullName(tax: string): string {
     const map: Record<string, string> = {
-      ICMS: 'ICMS (Imposto sobre Circulação de Mercadorias e Serviços)',
-      PIS: 'PIS (Programa de Integração Social)',
-      COFINS: 'COFINS (Contribuição para o Financiamento da Seguridade Social)',
-      IPI: 'IPI (Imposto sobre Produtos Industrializados)'
+      ICMS: 'ICMS',
+      PIS: 'PIS',
+      COFINS: 'COFINS',
+      IPI: 'IPI'
     };
     return map[tax] || tax;
   }

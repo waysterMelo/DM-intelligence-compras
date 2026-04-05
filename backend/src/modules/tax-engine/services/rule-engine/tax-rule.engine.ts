@@ -28,19 +28,45 @@ export interface RuleMatchResult {
 /**
  * TaxRuleEngine — motor de casamento de regras fiscais.
  *
- * Consulta o TaxRuleCatalog e casca as condições de aplicação (appliesTo)
- * contra o contexto do cálculo, emitindo ruleCodes reais em vez de strings hardcoded.
+ * Semântica das regras no catálogo:
+ *
+ * **Regra universal (BLOCKING):**
+ *   — Não tem condições (appliesTo vazio/null) e severity = BLOCKING
+ *   — Aplica-se a TODOS os cálculos; se aplicada, bloqueia o cálculo.
+ *
+ * **Regra bloqueante (BLOCKING):**
+ *   — Tem condições (appliesTo) e severity = BLOCKING
+ *   — Quando match, impede o cálculo e exige intervenção.
+ *
+ * **Regra de advertência (WARNING):**
+ *   — Quando match, alerta que crédito pode estar reduzido ou inexistente.
+ *
+ * **Regra informativa (INFO):**
+ *   — Descreve comportamento normal do sistema; sem impacto no status.
+ *
+ * Prioridade de avaliação:
+ *   1. BLOCKING (ordem alfabética de code) — se alguma match → cálculo bloqueado
+ *   2. WARNING  (ordem alfabética de code)
+ *   3. INFO     (ordem alfabética de code)
+ *
+ * Quando múltiplas regras match:
+ *   — severity máxima vence para determinar status governança
+ *   — todas as ruleCodes aplicadas são devolvidas (rastreabilidade completa)
  */
 @Injectable()
 export class TaxRuleEngine {
   private readonly logger = new Logger(TaxRuleEngine.name);
   private rulesCache: any[] | null = null;
 
+  // Ordem de prioridade das severidades
+  private readonly SEVERITY_ORDER: Record<string, number> = {
+    BLOCKING: 1,
+    WARNING:  2,
+    INFO:     3
+  };
+
   constructor(private readonly prisma: PrismaService) {}
 
-  /**
-   * Avalia todas as regras ativas contra o contexto e retorna as que se aplicam.
-   */
   async evaluate(ctx: RuleMatchContext): Promise<RuleMatchResult[]> {
     const rules = await this.getActiveRules();
     const results: RuleMatchResult[] = [];
@@ -50,37 +76,60 @@ export class TaxRuleEngine {
       results.push(match);
     }
 
+    // Ordenar por severidade (BLOCKING primeiro) e depois por code
+    results.sort((a, b) => {
+      const svA = this.SEVERITY_ORDER[a.severity] ?? 99;
+      const svB = this.SEVERITY_ORDER[b.severity] ?? 99;
+      if (svA !== svB) return svA - svB;
+      return a.ruleCode.localeCompare(b.ruleCode);
+    });
+
     return results;
   }
 
-  /**
-   * Retorna apenas os ruleCodes das regras que foram aplicadas (applied=true).
-   */
   async getAppliedRuleCodes(ctx: RuleMatchContext): Promise<string[]> {
     const matches = await this.evaluate(ctx);
     return matches.filter(m => m.applied).map(m => m.ruleCode);
   }
 
-  /**
-   * Retorna as bases legais associadas às regras aplicadas.
-   */
   async getAppliedLegalBasis(ctx: RuleMatchContext): Promise<string[]> {
     const matches = await this.evaluate(ctx);
     const basis: string[] = [];
     for (const m of matches) {
       if (m.applied) {
-        basis.push(this.describeRule(m));
+        basis.push(this.formatLegalBasis(m));
       }
     }
     return basis;
   }
 
-  /**
-   * Verifica se há regras BLOCKING aplicadas (impedem o cálculo).
-   */
   async hasBlockingRules(ctx: RuleMatchContext): Promise<boolean> {
     const matches = await this.evaluate(ctx);
     return matches.some(m => m.applied && m.severity === 'BLOCKING');
+  }
+
+  /**
+   * Retorna a severidade máxima entre as regras aplicadas.
+   */
+  async getMaxSeverity(ctx: RuleMatchContext): Promise<string> {
+    const matches = await this.evaluate(ctx);
+    const applied = matches.filter(m => m.applied);
+    if (applied.length === 0) return 'INFO';
+
+    // Ordenar por prioridade — BLOCKING é o mais alto
+    const sorted = [...applied].sort((a, b) => {
+      const svA = this.SEVERITY_ORDER[a.severity] ?? 99;
+      const svB = this.SEVERITY_ORDER[b.severity] ?? 99;
+      return svA - svB;
+    });
+    return sorted[0].severity;
+  }
+
+  /**
+   * Invalida o cache de regras (chamar após atualizar o catálogo).
+   */
+  invalidateCache() {
+    this.rulesCache = null;
   }
 
   private async getActiveRules() {
@@ -92,17 +141,10 @@ export class TaxRuleEngine {
     return this.rulesCache;
   }
 
-  /**
-   * Invalida o cache de regras (chamar após atualizar o catálogo).
-   */
-  invalidateCache() {
-    this.rulesCache = null;
-  }
-
   private matchRule(rule: any, ctx: RuleMatchContext): RuleMatchResult {
     const conditions = rule.appliesTo as Record<string, any> | null;
 
-    // Se não tem condições, regra é universal (aplica sempre)
+    // Regra universal (sem condições)
     if (!conditions || Object.keys(conditions).length === 0) {
       return {
         ruleCode: rule.code,
@@ -113,7 +155,7 @@ export class TaxRuleEngine {
       };
     }
 
-    // Avaliar cada condição
+    // Avaliar cada condição — TODAS devem match (AND lógico)
     const reasons: string[] = [];
     let allMatch = true;
 
@@ -151,7 +193,11 @@ export class TaxRuleEngine {
     };
   }
 
-  private describeRule(match: RuleMatchResult): string {
-    return `${match.ruleCode}: ${match.ruleName}`;
+  /**
+   * Formata a base legal de forma padronizada: `CODE — Nome`.
+   * Evita texto livre; mantém formato consumível por dashboard e auditoria.
+   */
+  private formatLegalBasis(match: RuleMatchResult): string {
+    return `${match.ruleCode} — ${match.ruleName}`;
   }
 }

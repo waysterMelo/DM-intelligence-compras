@@ -9,7 +9,8 @@ import {
   NotFoundException,
   UseGuards,
   Req,
-  Request
+  Request,
+  ConflictException
 } from '@nestjs/common';
 import { TaxReviewService } from './services/tax-review.service';
 import { CreateReviewDto, AssignReviewDto, ResolveReviewDto, DismissReviewDto } from './dto/review.dto';
@@ -39,7 +40,7 @@ export class TaxReviewController {
     return { success: true, reviewId: id, message: 'Review item opened.' };
   }
 
-  // === Listagem ===
+  // === Listagem (A5: contrato UI) ===
 
   @Get('open')
   async getOpenItems(@Req() req: AuthenticatedRequest, @Query('limit') limit?: string) {

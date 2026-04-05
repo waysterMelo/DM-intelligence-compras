@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, Optional } from '@nestjs/common';
 import { CalculateQuoteTaxDto } from '../dto/calculate-quote-tax.dto';
 import { TaxCalculationResultDto } from '../dto/tax-calculation-result.dto';
 import { GrossCostCalculator } from './calculators/gross-cost.calculator';
@@ -11,6 +11,7 @@ import { TaxRuleEngine, RuleMatchContext } from './rule-engine/tax-rule.engine';
 import { TaxExplanationService } from './explanation/tax-explanation.service';
 import { PrismaService } from '../../../prisma.service';
 import { TaxHashUtil } from '../utils/tax-hash.util';
+import { TaxReviewAutoService, AutoReviewContext } from '../../tax-review/services/tax-review-auto.service';
 
 @Injectable()
 export class TaxEngineService {
@@ -23,7 +24,8 @@ export class TaxEngineService {
     private readonly taxMemoryMapper: TaxMemoryMapper,
     private readonly taxRuleEngine: TaxRuleEngine,
     private readonly taxExplanationService: TaxExplanationService,
-    private readonly prisma: PrismaService
+    private readonly prisma: PrismaService,
+    @Optional() private readonly reviewAutoService?: TaxReviewAutoService
   ) {}
 
   async calculate(dto: CalculateQuoteTaxDto): Promise<TaxCalculationResultDto> {
@@ -62,10 +64,11 @@ export class TaxEngineService {
       isSupplierIpiTaxpayer: ctx.supplier.isIpiTaxpayer ?? false
     };
 
-    const [ruleCodes, legalBasisStrings, hasBlocking] = await Promise.all([
+    const [ruleCodes, legalBasisStrings, hasBlocking, maxSeverity] = await Promise.all([
       this.taxRuleEngine.getAppliedRuleCodes(ruleCtx),
       this.taxRuleEngine.getAppliedLegalBasis(ruleCtx),
-      this.taxRuleEngine.hasBlockingRules(ruleCtx)
+      this.taxRuleEngine.hasBlockingRules(ruleCtx),
+      this.taxRuleEngine.getMaxSeverity(ruleCtx)
     ]);
 
     // Fallback: se nenhuma regra foi encontrada (catálogo vazio), usar defaults
@@ -86,7 +89,7 @@ export class TaxEngineService {
 
     // === Fase 5: Confidence/Status dinâmicos ===
     const { confidenceLevel, calculationStatus } = this.determineGovernance(
-      ctx, icms, pis, cofins, ipi, hasBlocking
+      ctx, icms, pis, cofins, ipi, hasBlocking, maxSeverity
     );
 
     // === Fase 5: Explicação consistente ===
@@ -98,7 +101,7 @@ export class TaxEngineService {
     ];
 
     const explanation = this.taxExplanationService.generate(
-      ctx, branches, gross, ruleCodes, allLegalBasis
+      ctx, branches, gross, ruleCodes, allLegalBasis, maxSeverity
     );
 
     const result: TaxCalculationResultDto = {
@@ -154,15 +157,23 @@ export class TaxEngineService {
 
   /**
    * Determina confidenceLevel e calculationStatus com base nos resultados reais.
-   * Antes: tudo era hardcoded como VALIDATED_BY_REGISTRATION / SUCCESS.
-   * Agora: varia conforme elegibilidade de créditos e regras bloqueantes.
+   *
+   * Estados automáticos do motor:
+   *   BLOCKED / BLOCKED         → regra bloqueante aplicada
+   *   VALIDATED_BY_REGISTRATION/SUCCESS → todos os créditos elegíveis
+   *   ESTIMATED / SUCCESS       → algum crédito não elegível (confiança reduzida)
+   *
+   * Intervenção humana (revisão):
+   *   EXPERT_REVIEWED / SUCCESS  → após revisão com CALCULATION_ACCEPTED/ADJUSTED
+   *   (mantém PENDING)           → após CALCULATION_REJECTED, exige recálculo
    */
   private determineGovernance(
     ctx: any,
     icms: any, pis: any, cofins: any, ipi: any,
-    hasBlocking: boolean
+    hasBlocking: boolean,
+    maxSeverity: string
   ): { confidenceLevel: string; calculationStatus: string } {
-    // Bloqueio total por regra
+    // Bloqueio total por regra BLOCKING
     if (hasBlocking) {
       return { confidenceLevel: 'BLOCKED', calculationStatus: 'BLOCKED' };
     }
@@ -174,12 +185,12 @@ export class TaxEngineService {
     }
 
     // Pelo menos um crédito não é elegível — confiança reduzida
-    const anyDisallowed = !icms.eligible || !pis.eligible || !cofins.eligible || !ipi.eligible;
-    if (anyDisallowed) {
+    // maxSeverity WARNING ou INFO com creditos parciais → ESTIMATED/SUCCESS
+    if (maxSeverity === 'WARNING') {
       return { confidenceLevel: 'ESTIMATED', calculationStatus: 'SUCCESS' };
     }
 
-    // Fallback
+    // Fallback para cenários não esperados
     return { confidenceLevel: 'ESTIMATED', calculationStatus: 'PENDING' };
   }
 
@@ -222,9 +233,16 @@ export class TaxEngineService {
     };
   }
 
-  async saveSnapshot(quoteId: string, result: TaxCalculationResultDto, version: string, inputDto: CalculateQuoteTaxDto) {
+  async saveSnapshot(
+    quoteId: string,
+    result: TaxCalculationResultDto,
+    version: string,
+    inputDto: CalculateQuoteTaxDto,
+    buyerCompanyId?: string
+  ) {
     const auditMeta = TaxHashUtil.generateDeterministicHash(inputDto);
 
+    // C3: Sincronizar snapshot e estado da quote
     const snapshot = await this.prisma.quoteTaxSnapshot.create({
       data: {
         quoteId,
@@ -264,6 +282,37 @@ export class TaxEngineService {
         lastTaxEngineVersion: snapshot.engineVersion
       }
     });
+
+    // C1: Abertura automática de revisão (quando aplicável)
+    if (this.reviewAutoService && buyerCompanyId) {
+      const tenant = await this.prisma.fornecedor.findUnique({
+        where: { id: buyerCompanyId },
+        select: { tenantId: true }
+      });
+
+      if (tenant?.tenantId) {
+        const autoCtx: AutoReviewContext = {
+          tenantId: tenant.tenantId,
+          buyerCompanyId,
+          quoteId,
+          calculationStatus: result.governance.calculationStatus,
+          confidenceLevel: result.governance.confidenceLevel,
+          maxSeverity: result.explanation?.lines.some(l => !l.eligible) ? 'WARNING' : 'INFO',
+          totalCredits: result.explanation?.totalCredits ?? 0,
+          grossCostTotal: result.grossCostTotal,
+          netCost: result.netCostTotal,
+          ruleCodes: result.governance.ruleCodes,
+          hasBlockingRule: result.governance.calculationStatus === 'BLOCKED',
+          explanationSummary: result.explanation?.summary || ''
+        };
+
+        await this.reviewAutoService.autoOpenIfApplicable(
+          tenant.tenantId,
+          quoteId,
+          autoCtx
+        );
+      }
+    }
 
     return snapshot;
   }

@@ -1,74 +1,383 @@
 Equipe,
 
-A partir do estado atual do projeto, esta é a instrução completa para finalizar o sistema como SaaS enterprise de inteligência fiscal para compras.
+Entramos em uma nova etapa do produto.
 
-1. Encerramento da Fase 3
-   A Fase 3 está praticamente pronta, mas ainda precisa de fechamento formal:
+O sistema já não está mais só em “motor fiscal com reprocessamento”. Agora ele passou a ter três camadas concretas:
 
-* decidir se o tenant continuará sendo derivado de `Fornecedor` ou passará a ser explícito também em `Quote` e `Requisition`
-* ampliar o dashboard operacional de jobs para enxergar todos os status, não apenas jobs pendentes
-* reduzir duplicações residuais entre adapter e repository
+motor fiscal auditável
+reprocessamento em massa tenant-scoped
+governança avançada + revisão especializada
 
-2. Fase 4 — Revisão Especializada
-   Criar a camada humana do produto:
+O commit mais recente adicionou de forma real:
 
-* entidade `TaxReviewQueueItem`
-* entidade `TaxReviewDecision`
-* abertura automática de revisão para cenários sensíveis
-* atribuição e resolução por especialista
-* atualização do estado corrente da cotação após revisão
+Fase 4 — Revisão Especializada
+Fase 5 — Governança Fiscal Avançada
+acabamento adicional da Fase 3
 
-3. Fase 5 — Governança Fiscal Avançada
-   Evoluir a governança:
+A direção agora não é inventar nova arquitetura do zero. A direção é:
 
-* catálogo de regras mais rico
-* ruleCode por decisão
-* legal basis padronizada
-* confidence level definitivo
-* status fiscal definitivo
-* explicação consistente do cálculo
+consolidar, blindar, integrar e operacionalizar o que já entrou.
 
-4. Fase 6 — Camada Documental
-   Criar suporte a documento fiscal real:
+1. Estado oficial do projeto
+Fase 3 — Reprocessamento em Massa
 
-* ingestão de XML
-* parser de NF-e/CT-e
-* extração de CST/CSOSN/CFOP/NCM/alíquotas
-* reconciliação entre cadastro e documento
-* elevação de confiança do cálculo com base documental
+Tratar como concluída com hardening recente.
 
-5. Fase 7 — Operação Enterprise
-   Criar camada operacional:
+O que já existe:
 
-* dashboard de saúde do motor
-* métricas de jobs
-* métricas de revisão
-* alertas
-* exportações
-* observabilidade
+fila persistida em PostgreSQL
+worker em background
+status operacionais
+retry por item
+cancelamento
+skip por hash
+dashboard mais completo
+tenant-scoping reforçado
+remoção de método permissivo de quote sem tenant-scope no repositório
+Fase 4 — Revisão Especializada
 
-6. Fase 8 — SaaS Readiness Completo
-   Finalizar o produto como plataforma:
+Tratar como implementada no backend, ainda em etapa de consolidação.
 
-* tenant management
-* RBAC refinado
-* onboarding de tenant
-* billing readiness
-* segurança e compliance
+O que já existe:
 
-Ordem obrigatória:
+TaxReviewQueueItem
+TaxReviewDecision
+módulo tax-review
+endpoints de abrir, listar, atribuir, iniciar, resolver e descartar
+atualização do estado da Quote após decisão humana
+flag pendingReview na Quote
+Fase 5 — Governança Fiscal Avançada
 
-1. fechar Fase 3
-2. implementar Fase 4
-3. implementar Fase 5
-4. implementar Fase 6
-5. implementar Fase 7
-6. implementar Fase 8
+Tratar como implementada em primeira versão robusta.
 
-Objetivo final:
-Transformar o sistema em uma plataforma SaaS que calcula, explica, audita, reprocessa, escala para revisão humana e opera com segurança em ambiente multi-tenant.
+O que já existe:
 
-Promessa de produto correta neste estágio:
-Não vender como apuração fiscal definitiva, e sim como motor de inteligência fiscal auditável com governança, reprocessamento e revisão especializada.
+expansão de TaxRuleCatalog
+novo TaxLegalBasis
+TaxRuleEngine
+TaxExplanationService
+confidenceLevel dinâmico
+calculationStatus dinâmico
+ruleCodes vindos do catálogo
+explicação estruturada do cálculo
+seed inicial de regras e base legal
+2. O que precisa acontecer agora
 
-Essa é a linha de execução a partir de agora.
+A prioridade da equipe não é começar Fase 6 ainda.
+
+Primeiro precisamos transformar Fase 4 e Fase 5 em camadas seguras, coerentes e prontas para operação.
+
+A partir de agora, a ordem de trabalho é esta:
+
+Bloco A — blindagem da Fase 4
+Bloco B — consolidação da Fase 5
+Bloco C — integração entre motor, governança e revisão
+Bloco D — preparação controlada para Fase 6
+3. Bloco A — blindagem da Fase 4
+Objetivo
+
+Garantir que a revisão especializada não exista só como CRUD de backend, mas como camada enterprise segura e auditável.
+
+Tarefas obrigatórias
+A1. Fechar tenant-scoping da revisão
+
+Hoje existe um ponto que não pode ficar solto:
+no TaxReviewService.autoOpen(), a quote ainda é validada sem filtro tenant-scoped explícito, inclusive com comentário dizendo que isso deve ser ajustado “em produção”. Isso precisa ser corrigido agora.
+
+Ação:
+
+toda leitura de quote na revisão deve ser tenant-scoped
+toda criação de review deve validar que a quote pertence ao tenant autenticado
+toda resolução/atribuição já deve continuar tenant-scoped ponta a ponta
+
+Critério de pronto:
+nenhum fluxo de revisão pode localizar ou manipular quote fora do tenant.
+
+A2. Fechar regras de transição de estado
+
+Hoje o fluxo já existe:
+OPEN -> ASSIGNED -> IN_REVIEW -> RESOLVED/DISMISSED
+
+Ação:
+
+endurecer regras de transição
+impedir transições inválidas
+garantir idempotência
+garantir comportamento consistente em corrida de concorrência
+
+Critério de pronto:
+dois especialistas não conseguem assumir e resolver o mesmo item de forma inconsistente.
+
+A3. Completar trilha auditável da decisão humana
+
+A decisão já é registrada, mas isso precisa virar trilha auditável completa.
+
+Ação:
+
+revisar se toda decisão humana preserva:
+quem decidiu
+quando decidiu
+outcome
+explicação
+regras citadas
+base legal citada
+snapshot antigo / novo quando aplicável
+garantir que a decisão fique vinculada ao item de revisão e à quote de forma clara
+
+Critério de pronto:
+auditoria consegue reconstruir por que a revisão foi aberta e como foi encerrada.
+
+A4. Criar reason codes oficiais
+
+Hoje existe reason textual. Isso não basta para operação enterprise.
+
+Ação:
+substituir ou complementar texto livre por catálogo padronizado de códigos, por exemplo:
+
+LOW_CONFIDENCE
+BLOCKED
+HIGH_TAX_DELTA
+RULE_CONFLICT
+MANUAL_AUDIT_REQUESTED
+DOCUMENT_MISMATCH
+MISSING_CRITICAL_TAX_DATA
+
+Critério de pronto:
+dashboard e métricas passam a ler códigos estáveis, não texto livre.
+
+A5. Preparar contrato de UI
+
+Mesmo que o frontend ainda não esteja completo, o backend precisa entregar payloads estáveis.
+
+Ação:
+definir resposta esperada para:
+
+fila aberta
+fila atribuída ao usuário
+histórico resolvido
+detalhe de revisão
+stats por severidade/status
+
+Critério de pronto:
+o frontend consegue construir lista, detalhe e ações sem remendar payload.
+
+4. Bloco B — consolidação da Fase 5
+Objetivo
+
+Transformar a governança dinâmica em base confiável do produto.
+
+Tarefas obrigatórias
+B1. Revisar TaxRuleEngine
+
+O motor de regras já existe, mas está em V1. Ele ainda faz casamento simples via appliesTo.
+
+Ação:
+
+revisar semântica das condições
+garantir compatibilidade com cenários reais
+documentar claramente:
+o que é regra universal
+o que é regra bloqueante
+o que é warning
+o que é info
+garantir previsibilidade quando múltiplas regras se aplicam
+
+Critério de pronto:
+o time consegue explicar por que um ruleCode foi emitido em qualquer cálculo.
+
+B2. Padronizar legal basis
+
+Hoje o motor funde legalBasis dos calculadores com o rule engine. Isso foi um avanço, mas ainda precisa consistência.
+
+Ação:
+
+padronizar formato da base legal
+evitar mistura de descrições livres com referências formais
+separar:
+base legal estrutural
+observação operacional
+explicação legível
+garantir unicidade sem perda de rastreabilidade
+
+Critério de pronto:
+legalBasis deixa de ser coleção híbrida confusa e vira estrutura governável.
+
+B3. Revisar confidence/status dinâmicos
+
+Hoje já existem regras dinâmicas:
+
+BLOCKED/BLOCKED
+VALIDATED_BY_REGISTRATION/SUCCESS
+ESTIMATED/SUCCESS
+fallback ESTIMATED/PENDING
+
+Ação:
+
+validar se esses estados cobrem a realidade do produto
+revisar se CALCULATION_REJECTED e intervenção humana combinam corretamente com esses estados
+alinhar estados automáticos e humanos
+
+Critério de pronto:
+não existem ambiguidades entre estado do motor e estado após revisão humana.
+
+B4. Endurecer o seed fiscal
+
+O seed atual é uma base inicial. Não pode ser tratado como cobertura normativa suficiente.
+
+Ação:
+
+revisar nomenclatura dos códigos
+validar coerência das regras seeded
+separar regras exemplificativas de regras operacionais oficiais
+documentar origem e racional de cada grupo de regra
+
+Critério de pronto:
+o catálogo seeded pode ser usado como baseline controlada, não como demo improvisada.
+
+B5. Revisar explanation
+
+A explicação já existe e é um ótimo avanço. Agora precisa consistência de produto.
+
+Ação:
+
+padronizar linguagem da explicação
+garantir que resumo e linhas por tributo não se contradigam
+revisar detecção de bloqueio
+evitar texto excessivamente solto ou simplista demais
+
+Critério de pronto:
+auditor, comprador e especialista conseguem entender a explicação sem ambiguidade.
+
+5. Bloco C — integração entre Fase 4 e Fase 5
+Objetivo
+
+Fazer a revisão especializada nascer do motor de governança, não de fluxo manual isolado.
+
+Tarefas obrigatórias
+C1. Abrir revisão automaticamente a partir do resultado fiscal
+
+Hoje a documentação já aponta esse caminho, mas isso precisa virar integração real.
+
+Ação:
+integrar TaxEngineService ou camada de orquestração para abrir review automaticamente quando:
+
+calculationStatus = BLOCKED
+confidenceLevel = ESTIMATED em cenários materialmente sensíveis
+houver conflito relevante de regras
+houver delta fiscal acima de threshold
+houver ausência de dado crítico
+
+Critério de pronto:
+review passa a ser consequência controlada do motor, não evento manual avulso.
+
+C2. Definir thresholds configuráveis
+
+Não vamos enterrar regra de negócio no código.
+
+Ação:
+introduzir configuração por tenant ou por ambiente para:
+
+valor mínimo para escalonamento
+delta fiscal percentual/material
+cenários que exigem revisão
+severidade default por tipo de gatilho
+
+Critério de pronto:
+revisão automática não depende de mágicas hardcoded.
+
+C3. Sincronizar snapshot, governance e review
+
+Quando houver revisão aberta ou encerrada, os estados precisam conversar.
+
+Ação:
+garantir coerência entre:
+
+snapshot fiscal
+estado corrente da quote
+pendingReview
+decisão humana
+confidence/status final
+
+Critério de pronto:
+não existe quote “SUCCESS” com review crítico aberto por engano, nem quote “pendingReview=false” sem fechamento coerente.
+
+6. Bloco D — preparação controlada para Fase 6
+Objetivo
+
+Não começar XML/NF-e ainda de forma caótica. Primeiro preparar terreno.
+
+Tarefas obrigatórias
+D1. Definir contrato documental
+
+Antes de parser, definir modelo.
+
+Ação:
+desenhar contrato mínimo para documento fiscal:
+
+chave
+emitente
+destinatário
+CFOP
+CST/CSOSN
+NCM
+alíquotas
+indicadores de ST, monofasia, isenção, suspensão
+vínculo com quote / supplier / requisition
+D2. Mapear lacunas de cadastro versus documento
+
+A Fase 6 só fará sentido se ficar claro quais dúvidas hoje o documento resolve.
+
+Ação:
+listar todos os campos usados pelo motor que hoje dependem de cadastro ou input manual e que futuramente poderão ser enriquecidos por XML.
+
+7. Distribuição recomendada por frente
+Frente 1 — Backend fiscal/core
+
+Responsável por:
+
+consolidar TaxRuleEngine
+consolidar TaxExplanationService
+integração review automática
+revisão dos estados de governança
+Frente 2 — Backend workflow/operação
+
+Responsável por:
+
+tax-review
+transições de estado
+tenant-scoping
+métricas e stats
+integração com dashboard operacional
+Frente 3 — Dados/Prisma/migração
+
+Responsável por:
+
+migrations das novas entidades
+índices
+seed de regras e base legal
+revisão de enum UserRole
+revisão de relacionamentos
+Frente 4 — Produto/arquitetura
+
+Responsável por:
+
+catálogo oficial de reason codes
+definição final de statuses
+contrato de payload para UI
+critérios de escalonamento
+8. Critério de aceite da etapa atual
+
+Só vamos considerar esta etapa concluída quando:
+
+Fase 4 estiver tenant-safe ponta a ponta
+Fase 4 tiver transições auditáveis e estáveis
+Fase 5 estiver consistente em ruleCode, legalBasis, confidenceLevel, calculationStatus e explanation
+abertura automática de revisão estiver ligada ao resultado fiscal
+dashboard operacional conseguir enxergar jobs e revisões de forma útil
+catálogo inicial de regras estiver revisado como baseline séria
+9. O que não fazer agora
+não vender isso como apuração fiscal definitiva
+não começar Fase 6 antes de estabilizar Fases 4 e 5
+não espalhar regras críticas em frontend
+não criar novos fluxos sem tenant-scope explícito
+não deixar reason textual solto substituir reason code oficial

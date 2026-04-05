@@ -1,11 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../prisma.service';
+import { ReviewReasonCode } from '../dto/review.dto';
 
 export interface ReviewRecord {
   id: string;
   tenantId: string;
   quoteId: string;
-  reason: string;
+  reasonCode: string;
+  reasonText: string | null;
   severity: string;
   status: string;
   assignedToUserId: string | null;
@@ -30,7 +32,8 @@ export class TaxReviewRepository {
   async create(data: {
     tenantId: string;
     quoteId: string;
-    reason: string;
+    reasonCode: ReviewReasonCode;
+    reasonText?: string | null;
     severity: string;
     oldSnapshotId?: string | null;
     newSnapshotId?: string | null;
@@ -40,7 +43,8 @@ export class TaxReviewRepository {
       data: {
         tenantId: data.tenantId,
         quoteId: data.quoteId,
-        reason: data.reason,
+        reasonCode: data.reasonCode,
+        reasonText: data.reasonText,
         severity: data.severity as any,
         oldSnapshotId: data.oldSnapshotId,
         newSnapshotId: data.newSnapshotId,
@@ -49,7 +53,7 @@ export class TaxReviewRepository {
       }
     });
 
-    // Marcar quote com pendingReview
+    // Marcar quote com pendingReview (tenant-scoped validated by caller)
     await this.prisma.quote.update({
       where: { id: data.quoteId },
       data: { pendingReview: true }
@@ -64,7 +68,22 @@ export class TaxReviewRepository {
     return this.prisma.taxReviewQueueItem.findFirst({
       where: { id, tenantId },
       include: {
-        decisions: true,
+        decisions: {
+          select: {
+            id: true,
+            outcome: true,
+            adjustedValues: true,
+            explanation: true,
+            reasonCode: true,
+            severityAtDecision: true,
+            ruleCodes: true,
+            legalBasisRef: true,
+            itemStatusAtDecision: true,
+            severitySnapshot: true,
+            createdAt: true,
+            createdByUserId: true
+          }
+        },
         quote: {
           select: {
             id: true,
@@ -125,17 +144,19 @@ export class TaxReviewRepository {
   async getStats(tenantId: string): Promise<any> {
     const items = await this.prisma.taxReviewQueueItem.findMany({
       where: { tenantId },
-      select: { status: true, severity: true }
+      select: { status: true, severity: true, reasonCode: true }
     });
 
     const byStatus: Record<string, number> = {};
     const bySeverity: Record<string, number> = {};
+    const byReasonCode: Record<string, number> = {};
     for (const item of items) {
       byStatus[item.status] = (byStatus[item.status] || 0) + 1;
       bySeverity[item.severity] = (bySeverity[item.severity] || 0) + 1;
+      byReasonCode[item.reasonCode] = (byReasonCode[item.reasonCode] || 0) + 1;
     }
 
-    return { total: items.length, byStatus, bySeverity };
+    return { total: items.length, byStatus, bySeverity, byReasonCode };
   }
 
   // === Ações ===
@@ -162,7 +183,11 @@ export class TaxReviewRepository {
     resolutionNotes?: string;
   }): Promise<boolean> {
     const result = await this.prisma.taxReviewQueueItem.updateMany({
-      where: { id, tenantId, status: { in: ['ASSIGNED', 'IN_REVIEW'] } },
+      where: {
+        id,
+        tenantId,
+        status: { in: ['ASSIGNED', 'IN_REVIEW'] }
+      },
       data: {
         status: 'RESOLVED',
         resolvedByUserId: data.resolvedByUserId,
@@ -175,7 +200,11 @@ export class TaxReviewRepository {
 
   async dismiss(id: string, tenantId: string, reason?: string): Promise<boolean> {
     const result = await this.prisma.taxReviewQueueItem.updateMany({
-      where: { id, tenantId, status: { in: ['OPEN', 'ASSIGNED', 'IN_REVIEW'] } },
+      where: {
+        id,
+        tenantId,
+        status: { in: ['OPEN', 'ASSIGNED', 'IN_REVIEW'] }
+      },
       data: { status: 'DISMISSED', resolutionNotes: reason || 'Dismissed by specialist' }
     });
     return result.count > 0;
@@ -187,6 +216,10 @@ export class TaxReviewRepository {
     outcome: string;
     adjustedValues?: any;
     explanation?: string;
+    reasonCode?: string;
+    severityAtDecision?: string;
+    itemStatusAtDecision?: string;
+    severitySnapshot?: string;
     ruleCodes?: string[];
     legalBasisRef?: string;
     createdByUserId: string;
@@ -198,6 +231,10 @@ export class TaxReviewRepository {
         outcome: data.outcome as any,
         adjustedValues: data.adjustedValues,
         explanation: data.explanation,
+        reasonCode: data.reasonCode as any,
+        severityAtDecision: data.severityAtDecision,
+        itemStatusAtDecision: data.itemStatusAtDecision,
+        severitySnapshot: data.severitySnapshot,
         ruleCodes: data.ruleCodes || [],
         legalBasisRef: data.legalBasisRef,
         createdByUserId: data.createdByUserId

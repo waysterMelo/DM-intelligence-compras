@@ -20,7 +20,7 @@ export class TaxEngineController {
   @Post('quotes/:id/tax-snapshot')
   async createSnapshot(@Param('id') id: string, @Body() dto: CalculateQuoteTaxDto) {
     const result = await this.taxEngineService.calculate(dto);
-    return this.taxEngineService.saveSnapshot(id, result, TAX_ENGINE_VERSION, dto);
+    return this.taxEngineService.saveSnapshot(id, result, TAX_ENGINE_VERSION, dto, dto.buyerCompanyId);
   }
 
   @Get('quotes/:id/tax-snapshots')
@@ -34,7 +34,7 @@ export class TaxEngineController {
   @Post('quotes/:id/recalculate-tax')
   async recalculateTax(@Param('id') quoteId: string, @Body() body: { buyerCompanyId: string }) {
     if (!body?.buyerCompanyId) throw new BadRequestException("buyerCompanyId is required for recalculation");
-    
+
     const quote = await this.prisma.quote.findUnique({
       where: { id: quoteId },
       include: { requisition: true, fornecedor: true }
@@ -61,6 +61,6 @@ export class TaxEngineController {
     };
 
     const result = await this.taxEngineService.calculate(dto);
-    return this.taxEngineService.saveSnapshot(quoteId, result, TAX_ENGINE_VERSION, dto);
+    return this.taxEngineService.saveSnapshot(quoteId, result, TAX_ENGINE_VERSION, dto, body.buyerCompanyId);
   }
 }
