@@ -1,78 +1,74 @@
 Equipe,
 
-O commit 1b4e900 foi um avanço importante e bem alinhado com o que foi pedido na reanálise anterior. Ele melhora de forma concreta a prontidão da Fase 3 para um cenário SaaS multi-tenant.
+A partir do estado atual do projeto, esta é a instrução completa para finalizar o sistema como SaaS enterprise de inteligência fiscal para compras.
 
-O que foi melhorado corretamente
-O isolamento por tenant deu um salto real:
-o buyerCompanyId agora é validado com tenantId
-os escopos de seleção de quotes foram revisados para usar tenant
-os endpoints por id agora validam se o job pertence ao tenant do usuário autenticado
-O escopo ENGINE_VERSION melhorou:
-entrou um SemverUtil
-o adapter deixou de depender apenas de comparação lexical simples de string
-O retry foi corrigido conceitualmente:
-saiu do nível do job
-entrou no nível do item
-TaxReprocessingJobItem agora carrega retryCount e maxRetries
-O worker foi modularizado:
-TaxJobsWorker ficou mais limpo
-ItemProcessor concentra processamento e retry
-JobConcluder centraliza a conclusão
-O resumo operacional do job melhorou:
-agora o backend entrega métricas agregadas úteis para dashboard e suporte
+1. Encerramento da Fase 3
+   A Fase 3 está praticamente pronta, mas ainda precisa de fechamento formal:
 
-Essas mudanças estão corretas e devem ser mantidas.
+* decidir se o tenant continuará sendo derivado de `Fornecedor` ou passará a ser explícito também em `Quote` e `Requisition`
+* ampliar o dashboard operacional de jobs para enxergar todos os status, não apenas jobs pendentes
+* reduzir duplicações residuais entre adapter e repository
 
-O que ainda falta para fechar a Fase 3 de verdade
-1. Fechar tenant-scoping também na execução do item
+2. Fase 4 — Revisão Especializada
+   Criar a camada humana do produto:
 
-O ItemProcessor ainda usa findQuoteForProcessing(quoteId) em vez do método tenant-scoped já disponível no repositório. Isso precisa ser ajustado para que o processamento seja tenant-safe ponta a ponta, não apenas na criação do job e no escopo inicial.
+* entidade `TaxReviewQueueItem`
+* entidade `TaxReviewDecision`
+* abertura automática de revisão para cenários sensíveis
+* atribuição e resolução por especialista
+* atualização do estado corrente da cotação após revisão
 
-Ação:
+3. Fase 5 — Governança Fiscal Avançada
+   Evoluir a governança:
 
-passar tenantId do job para o ItemProcessor
-usar findQuoteForProcessingTenantScoped(quoteId, tenantId)
-2. Padronizar definitivamente o escopo ENGINE_VERSION
+* catálogo de regras mais rico
+* ruleCode por decisão
+* legal basis padronizada
+* confidence level definitivo
+* status fiscal definitivo
+* explicação consistente do cálculo
 
-O adapter já filtra com SemverUtil, o que foi ótimo. Mas o repositório ainda mantém uma rota de consulta com comparação lexical por string. Isso precisa ser unificado para evitar divergência futura de comportamento.
+4. Fase 6 — Camada Documental
+   Criar suporte a documento fiscal real:
 
-Ação:
+* ingestão de XML
+* parser de NF-e/CT-e
+* extração de CST/CSOSN/CFOP/NCM/alíquotas
+* reconciliação entre cadastro e documento
+* elevação de confiança do cálculo com base documental
 
-remover ou refatorar a variante lexical
-manter uma única semântica oficial para comparação de engine version
-3. Revisar a modelagem multi-tenant no domínio
+5. Fase 7 — Operação Enterprise
+   Criar camada operacional:
 
-O tenant já entrou em Fornecedor, e isso foi importante. Mas para um SaaS robusto de longo prazo, precisamos decidir se Quote e talvez Requisition também passarão a carregar tenantId explicitamente. Hoje o isolamento depende da relação quote -> fornecedor -> tenantId, o que funciona, mas é indireto.
+* dashboard de saúde do motor
+* métricas de jobs
+* métricas de revisão
+* alertas
+* exportações
+* observabilidade
 
-Ação:
+6. Fase 8 — SaaS Readiness Completo
+   Finalizar o produto como plataforma:
 
-abrir uma task de arquitetura para decidir se o tenant será propagado para Quote e Requisition
-isso não precisa travar a próxima sprint, mas precisa entrar no backlog de hardening do modelo
-4. Limpeza final do worker e da injeção
+* tenant management
+* RBAC refinado
+* onboarding de tenant
+* billing readiness
+* segurança e compliance
 
-O TaxJobsWorker ainda injeta PrismaService, embora a maior parte da lógica já esteja em repositório/serviços. Vale limpar isso agora que a modularização amadureceu.
+Ordem obrigatória:
 
-5. Preparar a próxima fase enterprise
+1. fechar Fase 3
+2. implementar Fase 4
+3. implementar Fase 5
+4. implementar Fase 6
+5. implementar Fase 7
+6. implementar Fase 8
 
-A Fase 3 está muito mais madura. O próximo movimento não deve ser mais “consertar job”, e sim evoluir para:
+Objetivo final:
+Transformar o sistema em uma plataforma SaaS que calcula, explica, audita, reprocessa, escala para revisão humana e opera com segurança em ambiente multi-tenant.
 
-governança operacional mais rica
-revisão especializada
-UX de auditoria e fila
-indicadores de confiança e intervenção humana
-Nova direção do plano
+Promessa de produto correta neste estágio:
+Não vender como apuração fiscal definitiva, e sim como motor de inteligência fiscal auditável com governança, reprocessamento e revisão especializada.
 
-A Fase 3 já não está mais em estágio de correção estrutural. Agora ela entra em estágio de:
-
-fechamento das últimas bordas de isolamento
-padronização de comportamento
-preparação para a próxima camada enterprise
-Próxima ordem de execução
-ajustar ItemProcessor para execução tenant-scoped
-unificar tratamento de ENGINE_VERSION
-limpar injeções e acoplamentos residuais
-abrir task de modelagem explícita de tenant em Quote/Requisition
-iniciar desenho da próxima fase enterprise
-Conclusão
-
-Esse commit foi bom e merece reconhecimento. Ele elevou a Fase 3 para um patamar muito mais próximo de prontidão SaaS. O plano continua, mas agora o foco deixa de ser “fazer funcionar” e passa a ser “blindar e preparar para escalar”.
+Essa é a linha de execução a partir de agora.

@@ -7,12 +7,16 @@ import { PisCalculator } from './services/calculators/pis.calculator';
 import { CofinsCalculator } from './services/calculators/cofins.calculator';
 import { IpiCalculator } from './services/calculators/ipi.calculator';
 import { TaxMemoryMapper } from './services/mappers/tax-memory.mapper';
+import { TaxRuleEngine } from './services/rule-engine/tax-rule.engine';
+import { TaxExplanationService } from './services/explanation/tax-explanation.service';
 import { PrismaService } from '../../prisma.service';
 
 @Module({
   controllers: [TaxEngineController],
   providers: [
     TaxEngineService,
+    TaxRuleEngine,
+    TaxExplanationService,
     GrossCostCalculator,
     IcmsCalculator,
     PisCalculator,
@@ -21,6 +25,6 @@ import { PrismaService } from '../../prisma.service';
     TaxMemoryMapper,
     PrismaService
   ],
-  exports: [TaxEngineService],
+  exports: [TaxEngineService, TaxRuleEngine],
 })
 export class TaxEngineModule {}

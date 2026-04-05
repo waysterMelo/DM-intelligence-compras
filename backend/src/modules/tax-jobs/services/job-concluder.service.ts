@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ReprocessingRepository, PendingJobRecord } from '../repositories/reprocessing.repository';
+import { ReprocessingRepository, JobRecord } from '../repositories/reprocessing.repository';
 
 /**
  * Determines the final status of a job and persists it.
@@ -21,7 +21,7 @@ export class JobConcluder {
    * Determines and persists the final status of a completed job.
    * @returns The determined status string
    */
-  async conclude(job: PendingJobRecord): Promise<string> {
+  async conclude(job: JobRecord): Promise<string> {
     const { totalItems, processedItems, skippedItems, failedItems } = job;
     const status = this.determineStatus(totalItems, processedItems, skippedItems, failedItems);
 

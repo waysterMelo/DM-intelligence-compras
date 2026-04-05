@@ -28,3 +28,23 @@ Média. Não bloqueia a Fase 3 atual, mas é recomendado antes de escalar para m
 - Migração de dados (backfill)
 - Atualizar services de criação de Quote/Requisition para setar `tenantId`
 - Revisar todos os escopos de job para usar `tenantId` direto em vez de `fornecedor.tenantId`
+
+---
+
+## Status da Decisão (pós-commit 555e248)
+
+**Decisão atual:** manter `tenantId` derivado via `Fornecedor.tenantId`.
+
+**Justificativa:** O isolamento multi-tenant já funciona corretamente em toda a cadeia de reprocessamento:
+- Criação do job valida tenant
+- Resolução de escopo filtra por `fornecedor.tenantId`
+- Execução do item valida quote contra tenant
+
+**Próximos passos:** A propagação explícita para `Quote.tenantId` e `Requisition.tenantId` fica como hardening recomendado para a próxima fase enterprise, mas não é bloqueante para a Fase 3 atual.
+
+---
+
+## Limpeza de Métodos Permissivos
+
+O método `findQuoteForProcessing()` (sem tenant-scoping) foi **removido** do repositório.
+O único método disponível agora é `findQuoteForProcessingTenantScoped(quoteId, tenantId)`, eliminando risco de regressão.

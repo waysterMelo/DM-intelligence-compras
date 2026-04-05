@@ -73,13 +73,20 @@ model Fornecedor {
   @@map("fornecedores")
 }
 
+enum UserRole {
+  BUYER
+  MANAGER
+  ADMIN
+  SPECIALIST
+}
+
 // Modelo de Usuários do Sistema
 model User {
-  id       String @id @default(uuid())
+  id       String   @id @default(uuid())
   name     String
-  username String @unique
+  username String   @unique
   password String
-  role     String // Cargo (Comprador, Gerente, etc)
+  role     UserRole @default(BUYER)
 
   fornecedorId String
   fornecedor   Fornecedor @relation(fields: [fornecedorId], references: [id])
@@ -176,6 +183,9 @@ model Quote {
   requisition   Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
 
   taxSnapshots QuoteTaxSnapshot[]
+  reviewQueue  TaxReviewQueueItem[]
+
+  pendingReview Boolean @default(false) // Flag rápida: quote tem item aberto na fila de revisão
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -221,10 +231,33 @@ model TaxRuleCatalog {
   code        String   @unique
   name        String
   description String?
+  category    String?  // ICMS | PIS | COFINS | IPI | GENERAL
+  severity    String?  // BLOCKING | WARNING | INFO
+  appliesTo   Json?    // Condições de aplicação (ex: { taxRegime: "REAL", itemUseType: "INDUSTRIAL_INPUT" })
   version     String
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  decisions   TaxReviewDecision[] @relation("DecisionRules")
+}
+
+// === FASE 5 — BASE LEGAL PADRONIZADA ===
+
+model TaxLegalBasis {
+  id          String   @id @default(uuid())
+  code        String   @unique  // Ex: "CFEB_ART155", "LC123_ART23"
+  name        String   // Ex: "CFEB Art. 155 - ICMS"
+  lawType     String   // CFEB | LC | DECREASE | PORTARIA | CONVENIO | NOTA_TECNICA
+  lawNumber   String?  // Número da lei (ex: "123/2006")
+  article     String?  // Artigo específico
+  paragraph   String?  // Parágrafo/inciso
+  description String
+  url         String?  // Link para texto oficial
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  @@map("tax_legal_basis")
 }
 
 // --- REPROCESSAMENTO EM MASSA (FASE 3) ---
@@ -286,4 +319,77 @@ model TaxReprocessingJobItem {
   job             TaxReprocessingJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@map("tax_reprocessing_job_items")
+}
+
+// === FASE 4 — REVISÃO ESPECIALIZADA ===
+
+enum ReviewStatus {
+  OPEN
+  ASSIGNED
+  IN_REVIEW
+  RESOLVED
+  DISMISSED
+}
+
+enum ReviewOutcome {
+  CALCULATION_ACCEPTED      // Especialista validou o cálculo automático
+  CALCULATION_ADJUSTED      // Especialista ajustou manualmente os valores
+  CALCULATION_REJECTED      // Especialista rejeitou e marcou como manual
+  ESCALATED                 // Encaminhado para nível superior
+}
+
+model TaxReviewQueueItem {
+  id                String        @id @default(uuid())
+  tenantId          String        // Isolamento multi-tenant
+  quoteId           String        // Cotação em revisão
+  reason            String        // Motivo da abertura automática (ex: LOW_CONFIDENCE, BLOCKED, HIGH_TAX_DELTA)
+  severity          ReviewSeverity @default(MEDIUM)
+
+  status            ReviewStatus  @default(OPEN)
+  assignedToUserId  String?       // Especialista responsável
+  resolvedByUserId  String?       // Quem resolveu
+
+  oldSnapshotId     String?       // Snapshot que gerou a revisão
+  newSnapshotId     String?       // Snapshot recalculado (se houver)
+
+  notes             String?       // Notas do especialista
+  resolutionNotes   String?       // Explicação da decisão
+
+  createdAt         DateTime      @default(now())
+  assignedAt        DateTime?
+  resolvedAt        DateTime?
+
+  quote             Quote          @relation(fields: [quoteId], references: [id])
+  decisions         TaxReviewDecision[]
+
+  @@index([tenantId, status])
+  @@index([assignedToUserId, status])
+  @@map("tax_review_queue_items")
+}
+
+enum ReviewSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model TaxReviewDecision {
+  id                String          @id @default(uuid())
+  reviewItemId      String
+  tenantId          String
+
+  outcome           ReviewOutcome
+  adjustedValues    Json?           // Valores ajustados pelo especialista (se applicable)
+  explanation       String?         // Explicação do especialista
+  ruleCodes         String[]        // Códigos de regra aplicados
+  legalBasisRef     String?         // Base legal citada
+
+  createdAt         DateTime        @default(now())
+  createdByUserId   String
+
+  reviewItem        TaxReviewQueueItem @relation(fields: [reviewItemId], references: [id], onDelete: Cascade)
+  appliedRules      TaxRuleCatalog[]  @relation("DecisionRules")
+
+  @@map("tax_review_decisions")
 }

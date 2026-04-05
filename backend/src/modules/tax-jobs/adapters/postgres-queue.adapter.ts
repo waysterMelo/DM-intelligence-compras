@@ -1,17 +1,24 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ReprocessingQueuePort, CreateJobInput, JobSummary } from '../ports/reprocessing-queue.port';
-import { AuthContext, ScopeType } from '../dto/create-job.dto';
-import { PrismaService } from '../../../prisma.service';
-import { SemverUtil } from '../utils/semver.util';
+import { AuthContext } from '../dto/create-job.dto';
+import { ReprocessingRepository } from '../repositories/reprocessing.repository';
 
+/**
+ * Adapter da fila em PostgreSQL.
+ *
+ * Responsabilidades:
+ * - Implementar o contrato do ReprocessingQueuePort
+ * - Delegar resolução de escopo e validações ao ReprocessingRepository
+ * - Não fazer queries diretas de escopo (evitar duplicação)
+ */
 @Injectable()
 export class PostgresQueueAdapter implements ReprocessingQueuePort {
   private readonly logger = new Logger(PostgresQueueAdapter.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly repo: ReprocessingRepository) {}
 
   async createJob(input: CreateJobInput, authContext: AuthContext): Promise<string> {
-    // Enforce tenant isolation: tenantId must come from auth context
+    // Tenant obrigatório
     const tenantId = input.tenantId || authContext.tenantId;
     if (!tenantId) {
       throw new BadRequestException(
@@ -19,7 +26,7 @@ export class PostgresQueueAdapter implements ReprocessingQueuePort {
       );
     }
 
-    // Enforce buyerCompanyId is provided
+    // Buyer obrigatório
     const buyerCompanyId = input.buyerCompanyId;
     if (!buyerCompanyId) {
       throw new BadRequestException(
@@ -27,230 +34,85 @@ export class PostgresQueueAdapter implements ReprocessingQueuePort {
       );
     }
 
-    // Validate buyer belongs to this tenant and is active
-    const buyer = await this.prisma.fornecedor.findFirst({
-      where: { id: buyerCompanyId, companyRole: 'BUYER', isActive: true, tenantId }
-    });
-    if (!buyer) {
+    // Validar buyer pertence ao tenant
+    const buyerOk = await this.repo.validateBuyer(buyerCompanyId, tenantId);
+    if (!buyerOk) {
       throw new BadRequestException(
         `Buyer company ${buyerCompanyId} not found, not active, or does not belong to tenant ${tenantId}.`
       );
     }
 
-    // Create job record
-    const job = await this.prisma.taxReprocessingJob.create({
-      data: {
-        tenantId,
-        requestedByUserId: authContext.userId, // Always from auth context, not body
-        buyerCompanyId,
+    // Criar job
+    const jobId = await this.repo.createJobRecord({
+      tenantId,
+      requestedByUserId: authContext.userId,
+      buyerCompanyId,
+      scopeType: input.scopeType,
+      scopePayloadJson: input.scopePayloadJson,
+      reason: input.reason,
+      engineVersionFrom: input.engineVersionFrom,
+      engineVersionTo: input.engineVersionTo
+    });
+
+    // Resolver escopo via repositório (única fonte de verdade)
+    const targetQuoteIds = await this.repo.resolveScope(
+      {
         scopeType: input.scopeType,
         scopePayloadJson: input.scopePayloadJson,
-        reason: input.reason,
         engineVersionFrom: input.engineVersionFrom,
-        engineVersionTo: input.engineVersionTo,
-        status: 'QUEUED',
-      }
-    });
-
-    // Resolve scope to quote IDs (with strict tenant isolation)
-    const targetQuoteIds = await this.resolveScope(input, tenantId, buyerCompanyId);
+        engineVersionTo: input.engineVersionTo
+      },
+      tenantId,
+      buyerCompanyId
+    );
 
     if (targetQuoteIds.length === 0) {
-      await this.prisma.taxReprocessingJob.update({
-        where: { id: job.id },
-        data: { status: 'COMPLETED_ALL_SKIPPED', finishedAt: new Date() }
-      });
+      await this.repo.concludeJob(jobId, 'COMPLETED_ALL_SKIPPED');
       this.logger.log(
-        `[Adapter] Job ${job.id} created with 0 target quotes for tenant ${tenantId}. ` +
+        `[Adapter] Job ${jobId} created with 0 target quotes for tenant ${tenantId}. ` +
         `Marked as COMPLETED_ALL_SKIPPED.`
       );
-      return job.id;
+      return jobId;
     }
 
-    // Insert job items
-    await this.prisma.taxReprocessingJobItem.createMany({
-      data: targetQuoteIds.map(quoteId => ({
-        jobId: job.id,
-        quoteId,
-        status: 'PENDING'
-      }))
-    });
-
-    await this.prisma.taxReprocessingJob.update({
-      where: { id: job.id },
-      data: { totalItems: targetQuoteIds.length }
-    });
+    // Criar itens
+    await this.repo.createJobItems(jobId, targetQuoteIds);
 
     this.logger.log(
-      `[Adapter] Job ${job.id} created with ${targetQuoteIds.length} items for tenant ${tenantId}.`
+      `[Adapter] Job ${jobId} created with ${targetQuoteIds.length} items for tenant ${tenantId}.`
     );
-    return job.id;
-  }
-
-  /**
-   * Resolves scope to quote IDs with strict tenant isolation.
-   * TENANT_ALL means all quotes belonging to this tenant, NEVER all quotes in the system.
-   */
-  private async resolveScope(input: CreateJobInput, tenantId: string, buyerCompanyId: string): Promise<string[]> {
-    switch (input.scopeType) {
-      case ScopeType.QUOTE: {
-        const quoteId = input.scopePayloadJson?.quoteId;
-        if (!quoteId) throw new BadRequestException('scopePayloadJson.quoteId is required for QUOTE scope');
-        // Verify quote belongs to tenant (via supplier -> tenant relationship)
-        const quote = await this.prisma.quote.findFirst({
-          where: { id: quoteId, fornecedor: { tenantId } },
-          select: { id: true }
-        });
-        if (!quote) {
-          throw new BadRequestException(`Quote ${quoteId} not found or does not belong to tenant ${tenantId}.`);
-        }
-        return [quoteId];
-      }
-
-      case ScopeType.COMPANY: {
-        const companyId = input.scopePayloadJson?.companyId;
-        if (!companyId) throw new BadRequestException('scopePayloadJson.companyId is required for COMPANY scope');
-        // Company must belong to this tenant
-        const company = await this.prisma.fornecedor.findFirst({
-          where: { id: companyId, tenantId }
-        });
-        if (!company) {
-          throw new BadRequestException(`Company ${companyId} does not belong to tenant ${tenantId}.`);
-        }
-        const quotes = await this.prisma.quote.findMany({
-          where: { fornecedorId: companyId, fornecedor: { tenantId } },
-          select: { id: true }
-        });
-        return quotes.map(q => q.id);
-      }
-
-      case ScopeType.TENANT_ALL: {
-        // ALL quotes belonging to this tenant (via supplier -> tenant)
-        const quotes = await this.prisma.quote.findMany({
-          where: { fornecedor: { tenantId } },
-          select: { id: true }
-        });
-        this.logger.log(`[Adapter] TENANT_ALL scope matched ${quotes.length} quotes for tenant ${tenantId}`);
-        return quotes.map(q => q.id);
-      }
-
-      case ScopeType.DATE_RANGE: {
-        const startDate = input.scopePayloadJson?.startDate;
-        const endDate = input.scopePayloadJson?.endDate;
-        if (!startDate || !endDate) {
-          throw new BadRequestException(
-            'scopePayloadJson.startDate and scopePayloadJson.endDate are required for DATE_RANGE scope'
-          );
-        }
-        // Date range scoped to tenant only
-        const quotes = await this.prisma.quote.findMany({
-          where: {
-            fornecedor: { tenantId },
-            createdAt: {
-              gte: new Date(startDate),
-              lte: new Date(endDate)
-            }
-          },
-          select: { id: true }
-        });
-        this.logger.log(`[Adapter] DATE_RANGE scope matched ${quotes.length} quotes for tenant ${tenantId}`);
-        return quotes.map(q => q.id);
-      }
-
-      case ScopeType.ENGINE_VERSION: {
-        const fromVersion = input.engineVersionFrom || input.scopePayloadJson?.fromVersion;
-        const toVersion = input.engineVersionTo || input.scopePayloadJson?.toVersion;
-
-        // Método unificado: retorna todas as quotes com engine version do tenant
-        const quotes = await this.prisma.quote.findMany({
-          where: {
-            fornecedor: { tenantId },
-            lastTaxEngineVersion: { not: null }
-          },
-          select: { id: true, lastTaxEngineVersion: true }
-        });
-
-        // Filtro semântico via SemverUtil (única fonte de verdade)
-        const matchedIds = quotes
-          .filter(q => {
-            const ver = q.lastTaxEngineVersion;
-            if (!ver) return false;
-            return SemverUtil.inRange(ver, fromVersion, toVersion);
-          })
-          .map(q => q.id);
-
-        this.logger.log(
-          `[Adapter] ENGINE_VERSION scope (${fromVersion || '*'} → ${toVersion || '*'}) ` +
-          `matched ${matchedIds.length}/${quotes.length} quotes for tenant ${tenantId}`
-        );
-        return matchedIds;
-      }
-
-      default:
-        throw new BadRequestException(`Unknown scopeType: ${input.scopeType}`);
-    }
+    return jobId;
   }
 
   async getPendingJobs(tenantId?: string): Promise<JobSummary[]> {
-    const where: any = { status: 'QUEUED' };
-    if (tenantId) {
-      where.tenantId = tenantId;
-    }
-    return this.prisma.taxReprocessingJob.findMany({
-      where,
-      orderBy: { createdAt: 'asc' }
-    }) as Promise<JobSummary[]>;
+    // Retorna jobs QUEUED e RUNNING para visão operacional mínima
+    return this.repo.getJobsByStatus(['QUEUED', 'RUNNING'], tenantId) as Promise<JobSummary[]>;
+  }
+
+  async getAllJobs(tenantId?: string): Promise<JobSummary[]> {
+    // Retorna todos os jobs para dashboard completo
+    return this.repo.getJobsByStatus([], tenantId) as Promise<JobSummary[]>;
   }
 
   async lockJob(jobId: string): Promise<boolean> {
-    const result = await this.prisma.taxReprocessingJob.updateMany({
-      where: { id: jobId, status: 'QUEUED' },
-      data: { status: 'RUNNING', startedAt: new Date() }
-    });
-    return result.count > 0;
+    const lockCount = await this.repo.lockJob(jobId);
+    return lockCount > 0;
   }
 
   async getJobProgress(jobId: string): Promise<JobSummary | null> {
-    const job = await this.prisma.taxReprocessingJob.findUnique({
-      where: { id: jobId },
-      include: {
-        items: {
-          select: {
-            id: true,
-            quoteId: true,
-            status: true,
-            skipReason: true,
-            errorMessage: true,
-            retryCount: true,
-            maxRetries: true,
-            startedAt: true,
-            finishedAt: true
-          }
-        }
-      }
-    });
-    return job as JobSummary | null;
+    return this.repo.getJobSummary(jobId);
   }
 
   async cancelJob(jobId: string): Promise<void> {
-    await this.prisma.taxReprocessingJob.updateMany({
-      where: { id: jobId, status: { in: ['QUEUED', 'RUNNING'] } },
-      data: { status: 'CANCELED', finishedAt: new Date() }
-    });
+    await this.repo.concludeJob(jobId, 'CANCELED');
   }
 
   async cancelJobCooperative(jobId: string): Promise<void> {
-    await this.prisma.taxReprocessingJob.updateMany({
-      where: { id: jobId, status: { in: ['QUEUED', 'RUNNING'] }, cancelRequestedAt: null },
-      data: { cancelRequestedAt: new Date() }
-    });
+    await this.repo.requestCancelCooperative(jobId);
   }
 
   async isJobCancelled(jobId: string): Promise<boolean> {
-    const job = await this.prisma.taxReprocessingJob.findUnique({
-      where: { id: jobId },
-      select: { cancelRequestedAt: true, status: true }
-    });
+    const job = await this.repo.getJobStatus(jobId);
     return !!(job?.cancelRequestedAt && ['QUEUED', 'RUNNING'].includes(job.status));
   }
 }

@@ -7,17 +7,19 @@ import { AuthModule } from './modules/auth/auth.module';
 import { TaxEngineModule } from './modules/tax-engine/tax-engine.module';
 import { TaxGovernanceModule } from './modules/tax-governance/tax-governance.module'; 
 import { TaxJobsModule } from './modules/tax-jobs/tax-jobs.module';// Import do Motor Fiscal
+import { TaxReviewModule } from './modules/tax-review/tax-review.module';
 
 @Module({
   imports: [
-    RequisitionsModule, 
-    StatsModule, 
-    CompaniesModule, 
-    UsersModule, 
+    RequisitionsModule,
+    StatsModule,
+    CompaniesModule,
+    UsersModule,
     AuthModule,
     TaxEngineModule,
     TaxGovernanceModule,
-    TaxJobsModule
+    TaxJobsModule,
+    TaxReviewModule
   ],
   controllers: [],
   providers: [],

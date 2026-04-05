@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ReprocessingConfig } from './config/reprocessing.config';
-import { ReprocessingRepository, PendingJobRecord, JobItemRecord } from './repositories/reprocessing.repository';
+import { ReprocessingRepository, JobRecord, JobItemRecord } from './repositories/reprocessing.repository';
 import { ItemProcessor } from './services/item-processor.service';
 import { JobConcluder } from './services/job-concluder.service';
 
@@ -118,7 +118,7 @@ export class TaxJobsWorker {
    * Acquires and locks the next queued job atomically.
    * @returns The locked job record, or null if none available
    */
-  private async acquireNextJob(): Promise<PendingJobRecord | null> {
+  private async acquireNextJob(): Promise<JobRecord | null> {
     const job = await this.repository.findNextQueuedJob();
     if (!job) return null;
 
@@ -152,7 +152,7 @@ export class TaxJobsWorker {
    * @returns Counts of processed, skipped, and failed items
    */
   private async processBatch(
-    job: PendingJobRecord,
+    job: JobRecord,
     items: JobItemRecord[]
   ): Promise<{ processed: number; skipped: number; failed: number }> {
     let processed = 0;

@@ -26,4 +26,24 @@ export class TaxCalculationResultDto {
     ruleCodes: string[];
     decisionSummary: any;
   };
+
+  // Fase 5: Explicação consistente do cálculo
+  explanation?: {
+    summary: string;
+    lines: Array<{
+      tax: string;
+      baseValue: number;
+      rate: number;
+      creditAmount: number;
+      eligible: boolean;
+      reason: string;
+      legalBasis: string[];
+      ruleCode: string;
+    }>;
+    totalCredits: number;
+    grossCost: number;
+    netCost: number;
+    blocked: boolean;
+    blockReason?: string;
+  };
 }

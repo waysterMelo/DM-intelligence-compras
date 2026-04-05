@@ -6,16 +6,16 @@ import {
   Body,
   BadRequestException,
   NotFoundException,
-  ForbiddenException,
   UseGuards,
   Request,
-  Req
+  Req,
+  Query
 } from '@nestjs/common';
 import { ReprocessingQueuePort } from './ports/reprocessing-queue.port';
 import { CreateJobDto } from './dto/create-job.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
-import { ReprocessingRepository } from './repositories/reprocessing.repository';
+import { ReprocessingRepository, JobStatusFilter } from './repositories/reprocessing.repository';
 
 interface AuthenticatedRequest extends Request {
   user: {
@@ -79,10 +79,62 @@ export class TaxJobsController {
   }
 
   @Get()
-  async listJobs(@Req() req: AuthenticatedRequest) {
-    // Filter by tenant if present in auth context
+  async listJobs(
+    @Req() req: AuthenticatedRequest,
+    @Query('status') status?: string | string[]
+  ) {
     const tenantId = req.user.tenantId;
-    return this.queue.getPendingJobs(tenantId);
+
+    // Se status não fornecido, retorna QUEUED + RUNNING (visão padrão)
+    if (!status) {
+      return this.queue.getPendingJobs(tenantId);
+    }
+
+    // Dashboard operacional completo: filtra por status
+    const statusArray = Array.isArray(status) ? status : [status];
+    const validStatuses = statusArray.filter((s): s is JobStatusFilter =>
+      ['QUEUED', 'RUNNING', 'COMPLETED', 'COMPLETED_ALL_SKIPPED', 'PARTIAL', 'FAILED', 'CANCELED'].includes(s)
+    );
+
+    if (validStatuses.length === 0) {
+      throw new BadRequestException(
+        `Invalid status filter. Valid values: QUEUED, RUNNING, COMPLETED, COMPLETED_ALL_SKIPPED, PARTIAL, FAILED, CANCELED`
+      );
+    }
+
+    return this.repository.getJobsByStatus(validStatuses, tenantId || undefined);
+  }
+
+  @Get('dashboard')
+  @Roles('ADMIN', 'MANAGER')
+  async dashboard(@Req() req: AuthenticatedRequest) {
+    // Visão completa de todos os status para dashboard operacional
+    const tenantId = req.user.tenantId;
+    const allJobs = await this.repository.getJobsByStatus([], tenantId || undefined);
+
+    const byStatus: Record<string, number> = {};
+    for (const job of allJobs) {
+      byStatus[job.status] = (byStatus[job.status] || 0) + 1;
+    }
+
+    const totalItems = allJobs.reduce((sum, j) => sum + j.totalItems, 0);
+    const totalProcessed = allJobs.reduce((sum, j) => sum + j.processedItems, 0);
+    const totalSkipped = allJobs.reduce((sum, j) => sum + j.skippedItems, 0);
+    const totalFailed = allJobs.reduce((sum, j) => sum + j.failedItems, 0);
+
+    return {
+      byStatus,
+      totals: {
+        jobs: allJobs.length,
+        items: totalItems,
+        processed: totalProcessed,
+        skipped: totalSkipped,
+        failed: totalFailed
+      },
+      recentJobs: allJobs
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .slice(0, 20)
+    };
   }
 
   @Get(':id')
