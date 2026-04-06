@@ -29,6 +29,6 @@ import { TaxReviewAutoService } from '../tax-review/services/tax-review-auto.ser
     TaxMemoryMapper,
     PrismaService
   ],
-  exports: [TaxEngineService, TaxRuleEngine],
+  exports: [TaxEngineService, TaxRuleEngine, TaxExplanationService],
 })
 export class TaxEngineModule {}

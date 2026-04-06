@@ -1,383 +1,108 @@
-Equipe,
-
-Entramos em uma nova etapa do produto.
-
-O sistema já não está mais só em “motor fiscal com reprocessamento”. Agora ele passou a ter três camadas concretas:
-
-motor fiscal auditável
-reprocessamento em massa tenant-scoped
-governança avançada + revisão especializada
-
-O commit mais recente adicionou de forma real:
-
-Fase 4 — Revisão Especializada
-Fase 5 — Governança Fiscal Avançada
-acabamento adicional da Fase 3
-
-A direção agora não é inventar nova arquitetura do zero. A direção é:
-
-consolidar, blindar, integrar e operacionalizar o que já entrou.
-
-1. Estado oficial do projeto
-Fase 3 — Reprocessamento em Massa
-
-Tratar como concluída com hardening recente.
-
-O que já existe:
-
-fila persistida em PostgreSQL
-worker em background
-status operacionais
-retry por item
-cancelamento
-skip por hash
-dashboard mais completo
-tenant-scoping reforçado
-remoção de método permissivo de quote sem tenant-scope no repositório
-Fase 4 — Revisão Especializada
-
-Tratar como implementada no backend, ainda em etapa de consolidação.
-
-O que já existe:
-
-TaxReviewQueueItem
-TaxReviewDecision
-módulo tax-review
-endpoints de abrir, listar, atribuir, iniciar, resolver e descartar
-atualização do estado da Quote após decisão humana
-flag pendingReview na Quote
-Fase 5 — Governança Fiscal Avançada
-
-Tratar como implementada em primeira versão robusta.
-
-O que já existe:
-
-expansão de TaxRuleCatalog
-novo TaxLegalBasis
-TaxRuleEngine
-TaxExplanationService
-confidenceLevel dinâmico
-calculationStatus dinâmico
-ruleCodes vindos do catálogo
-explicação estruturada do cálculo
-seed inicial de regras e base legal
-2. O que precisa acontecer agora
-
-A prioridade da equipe não é começar Fase 6 ainda.
-
-Primeiro precisamos transformar Fase 4 e Fase 5 em camadas seguras, coerentes e prontas para operação.
-
-A partir de agora, a ordem de trabalho é esta:
-
-Bloco A — blindagem da Fase 4
-Bloco B — consolidação da Fase 5
-Bloco C — integração entre motor, governança e revisão
-Bloco D — preparação controlada para Fase 6
-3. Bloco A — blindagem da Fase 4
-Objetivo
-
-Garantir que a revisão especializada não exista só como CRUD de backend, mas como camada enterprise segura e auditável.
-
-Tarefas obrigatórias
-A1. Fechar tenant-scoping da revisão
-
-Hoje existe um ponto que não pode ficar solto:
-no TaxReviewService.autoOpen(), a quote ainda é validada sem filtro tenant-scoped explícito, inclusive com comentário dizendo que isso deve ser ajustado “em produção”. Isso precisa ser corrigido agora.
-
-Ação:
-
-toda leitura de quote na revisão deve ser tenant-scoped
-toda criação de review deve validar que a quote pertence ao tenant autenticado
-toda resolução/atribuição já deve continuar tenant-scoped ponta a ponta
-
-Critério de pronto:
-nenhum fluxo de revisão pode localizar ou manipular quote fora do tenant.
-
-A2. Fechar regras de transição de estado
-
-Hoje o fluxo já existe:
-OPEN -> ASSIGNED -> IN_REVIEW -> RESOLVED/DISMISSED
-
-Ação:
-
-endurecer regras de transição
-impedir transições inválidas
-garantir idempotência
-garantir comportamento consistente em corrida de concorrência
-
-Critério de pronto:
-dois especialistas não conseguem assumir e resolver o mesmo item de forma inconsistente.
-
-A3. Completar trilha auditável da decisão humana
-
-A decisão já é registrada, mas isso precisa virar trilha auditável completa.
-
-Ação:
-
-revisar se toda decisão humana preserva:
-quem decidiu
-quando decidiu
-outcome
-explicação
-regras citadas
-base legal citada
-snapshot antigo / novo quando aplicável
-garantir que a decisão fique vinculada ao item de revisão e à quote de forma clara
-
-Critério de pronto:
-auditoria consegue reconstruir por que a revisão foi aberta e como foi encerrada.
-
-A4. Criar reason codes oficiais
-
-Hoje existe reason textual. Isso não basta para operação enterprise.
-
-Ação:
-substituir ou complementar texto livre por catálogo padronizado de códigos, por exemplo:
-
-LOW_CONFIDENCE
-BLOCKED
-HIGH_TAX_DELTA
-RULE_CONFLICT
-MANUAL_AUDIT_REQUESTED
-DOCUMENT_MISMATCH
-MISSING_CRITICAL_TAX_DATA
-
-Critério de pronto:
-dashboard e métricas passam a ler códigos estáveis, não texto livre.
-
-A5. Preparar contrato de UI
-
-Mesmo que o frontend ainda não esteja completo, o backend precisa entregar payloads estáveis.
-
-Ação:
-definir resposta esperada para:
-
-fila aberta
-fila atribuída ao usuário
-histórico resolvido
-detalhe de revisão
-stats por severidade/status
-
-Critério de pronto:
-o frontend consegue construir lista, detalhe e ações sem remendar payload.
-
-4. Bloco B — consolidação da Fase 5
-Objetivo
-
-Transformar a governança dinâmica em base confiável do produto.
-
-Tarefas obrigatórias
-B1. Revisar TaxRuleEngine
-
-O motor de regras já existe, mas está em V1. Ele ainda faz casamento simples via appliesTo.
-
-Ação:
-
-revisar semântica das condições
-garantir compatibilidade com cenários reais
-documentar claramente:
-o que é regra universal
-o que é regra bloqueante
-o que é warning
-o que é info
-garantir previsibilidade quando múltiplas regras se aplicam
-
-Critério de pronto:
-o time consegue explicar por que um ruleCode foi emitido em qualquer cálculo.
-
-B2. Padronizar legal basis
-
-Hoje o motor funde legalBasis dos calculadores com o rule engine. Isso foi um avanço, mas ainda precisa consistência.
-
-Ação:
-
-padronizar formato da base legal
-evitar mistura de descrições livres com referências formais
-separar:
-base legal estrutural
-observação operacional
-explicação legível
-garantir unicidade sem perda de rastreabilidade
-
-Critério de pronto:
-legalBasis deixa de ser coleção híbrida confusa e vira estrutura governável.
-
-B3. Revisar confidence/status dinâmicos
-
-Hoje já existem regras dinâmicas:
-
-BLOCKED/BLOCKED
-VALIDATED_BY_REGISTRATION/SUCCESS
-ESTIMATED/SUCCESS
-fallback ESTIMATED/PENDING
-
-Ação:
-
-validar se esses estados cobrem a realidade do produto
-revisar se CALCULATION_REJECTED e intervenção humana combinam corretamente com esses estados
-alinhar estados automáticos e humanos
-
-Critério de pronto:
-não existem ambiguidades entre estado do motor e estado após revisão humana.
-
-B4. Endurecer o seed fiscal
-
-O seed atual é uma base inicial. Não pode ser tratado como cobertura normativa suficiente.
-
-Ação:
-
-revisar nomenclatura dos códigos
-validar coerência das regras seeded
-separar regras exemplificativas de regras operacionais oficiais
-documentar origem e racional de cada grupo de regra
-
-Critério de pronto:
-o catálogo seeded pode ser usado como baseline controlada, não como demo improvisada.
-
-B5. Revisar explanation
-
-A explicação já existe e é um ótimo avanço. Agora precisa consistência de produto.
-
-Ação:
-
-padronizar linguagem da explicação
-garantir que resumo e linhas por tributo não se contradigam
-revisar detecção de bloqueio
-evitar texto excessivamente solto ou simplista demais
-
-Critério de pronto:
-auditor, comprador e especialista conseguem entender a explicação sem ambiguidade.
-
-5. Bloco C — integração entre Fase 4 e Fase 5
-Objetivo
-
-Fazer a revisão especializada nascer do motor de governança, não de fluxo manual isolado.
-
-Tarefas obrigatórias
-C1. Abrir revisão automaticamente a partir do resultado fiscal
-
-Hoje a documentação já aponta esse caminho, mas isso precisa virar integração real.
-
-Ação:
-integrar TaxEngineService ou camada de orquestração para abrir review automaticamente quando:
-
-calculationStatus = BLOCKED
-confidenceLevel = ESTIMATED em cenários materialmente sensíveis
-houver conflito relevante de regras
-houver delta fiscal acima de threshold
-houver ausência de dado crítico
-
-Critério de pronto:
-review passa a ser consequência controlada do motor, não evento manual avulso.
-
-C2. Definir thresholds configuráveis
-
-Não vamos enterrar regra de negócio no código.
-
-Ação:
-introduzir configuração por tenant ou por ambiente para:
-
-valor mínimo para escalonamento
-delta fiscal percentual/material
-cenários que exigem revisão
-severidade default por tipo de gatilho
-
-Critério de pronto:
-revisão automática não depende de mágicas hardcoded.
-
-C3. Sincronizar snapshot, governance e review
-
-Quando houver revisão aberta ou encerrada, os estados precisam conversar.
-
-Ação:
-garantir coerência entre:
-
-snapshot fiscal
-estado corrente da quote
-pendingReview
-decisão humana
-confidence/status final
-
-Critério de pronto:
-não existe quote “SUCCESS” com review crítico aberto por engano, nem quote “pendingReview=false” sem fechamento coerente.
-
-6. Bloco D — preparação controlada para Fase 6
-Objetivo
-
-Não começar XML/NF-e ainda de forma caótica. Primeiro preparar terreno.
-
-Tarefas obrigatórias
-D1. Definir contrato documental
-
-Antes de parser, definir modelo.
-
-Ação:
-desenhar contrato mínimo para documento fiscal:
-
-chave
-emitente
-destinatário
-CFOP
-CST/CSOSN
-NCM
-alíquotas
-indicadores de ST, monofasia, isenção, suspensão
-vínculo com quote / supplier / requisition
-D2. Mapear lacunas de cadastro versus documento
-
-A Fase 6 só fará sentido se ficar claro quais dúvidas hoje o documento resolve.
-
-Ação:
-listar todos os campos usados pelo motor que hoje dependem de cadastro ou input manual e que futuramente poderão ser enriquecidos por XML.
-
-7. Distribuição recomendada por frente
-Frente 1 — Backend fiscal/core
-
-Responsável por:
-
-consolidar TaxRuleEngine
-consolidar TaxExplanationService
-integração review automática
-revisão dos estados de governança
-Frente 2 — Backend workflow/operação
-
-Responsável por:
-
-tax-review
-transições de estado
-tenant-scoping
-métricas e stats
-integração com dashboard operacional
-Frente 3 — Dados/Prisma/migração
-
-Responsável por:
-
-migrations das novas entidades
-índices
-seed de regras e base legal
-revisão de enum UserRole
-revisão de relacionamentos
-Frente 4 — Produto/arquitetura
-
-Responsável por:
-
-catálogo oficial de reason codes
-definição final de statuses
-contrato de payload para UI
-critérios de escalonamento
-8. Critério de aceite da etapa atual
-
-Só vamos considerar esta etapa concluída quando:
-
-Fase 4 estiver tenant-safe ponta a ponta
-Fase 4 tiver transições auditáveis e estáveis
-Fase 5 estiver consistente em ruleCode, legalBasis, confidenceLevel, calculationStatus e explanation
-abertura automática de revisão estiver ligada ao resultado fiscal
-dashboard operacional conseguir enxergar jobs e revisões de forma útil
-catálogo inicial de regras estiver revisado como baseline séria
-9. O que não fazer agora
-não vender isso como apuração fiscal definitiva
-não começar Fase 6 antes de estabilizar Fases 4 e 5
-não espalhar regras críticas em frontend
-não criar novos fluxos sem tenant-scope explícito
-não deixar reason textual solto substituir reason code oficial
+erro -> 2026-04-05 22:07:24.848 | 
+2026-04-05 22:07:24.848 | > ra-polymers-backend@0.0.1 start:prod:migrate
+2026-04-05 22:07:24.848 | > npm run prisma:migrate:deploy && npm run start:prod
+2026-04-05 22:07:24.848 | 
+2026-04-05 22:07:25.313 | 
+2026-04-05 22:07:25.313 | > ra-polymers-backend@0.0.1 prisma:migrate:deploy
+2026-04-05 22:07:25.313 | > prisma migrate deploy
+2026-04-05 22:07:25.313 | 
+2026-04-05 22:07:26.776 | Environment variables loaded from .env
+2026-04-05 22:07:26.778 | Prisma schema loaded from prisma/schema.prisma
+2026-04-05 22:07:26.817 | Datasource "db": PostgreSQL database "ra_procurement", schema "public" at "db:5432"
+2026-04-05 22:07:27.091 | 
+2026-04-05 22:07:27.091 | 7 migrations found in prisma/migrations
+2026-04-05 22:07:27.091 | 
+2026-04-05 22:07:27.252 | 
+2026-04-05 22:07:27.252 | No pending migrations to apply.
+2026-04-05 22:07:27.863 | 
+2026-04-05 22:07:27.863 | > ra-polymers-backend@0.0.1 start:prod
+2026-04-05 22:07:27.863 | > node dist/main
+2026-04-05 22:07:27.863 | 
+2026-04-05 22:07:29.045 | node:internal/modules/cjs/loader:1661
+2026-04-05 22:07:29.045 |   return process.dlopen(module, path.toNamespacedPath(filename));
+2026-04-05 22:07:29.045 |                  ^
+2026-04-05 22:07:29.045 | 
+2026-04-05 22:07:29.045 | Error: /app/node_modules/bcrypt/lib/binding/napi-v3/bcrypt_lib.node: invalid ELF header
+2026-04-05 22:07:29.045 |     at Module._extensions..node (node:internal/modules/cjs/loader:1661:18)
+2026-04-05 22:07:29.045 |     at Module.load (node:internal/modules/cjs/loader:1266:32)
+2026-04-05 22:07:29.045 |     at Module._load (node:internal/modules/cjs/loader:1091:12)
+2026-04-05 22:07:29.045 |     at Module.require (node:internal/modules/cjs/loader:1289:19)
+2026-04-05 22:07:29.045 |     at require (node:internal/modules/helpers:182:18)
+2026-04-05 22:07:29.045 |     at Object.<anonymous> (/app/node_modules/bcrypt/bcrypt.js:6:16)
+2026-04-05 22:07:29.045 |     at Module._compile (node:internal/modules/cjs/loader:1521:14)
+2026-04-05 22:07:29.045 |     at Module._extensions..js (node:internal/modules/cjs/loader:1623:10)
+2026-04-05 22:07:29.045 |     at Module.load (node:internal/modules/cjs/loader:1266:32)
+2026-04-05 22:07:29.045 |     at Module._load (node:internal/modules/cjs/loader:1091:12) {
+2026-04-05 22:07:29.045 |   code: 'ERR_DLOPEN_FAILED'
+2026-04-05 22:07:29.045 | }
+2026-04-05 22:07:29.045 | 
+2026-04-05 22:07:29.045 | Node.js v20.20.2
+2026-04-05 22:07:32.770 | 
+2026-04-05 22:07:32.770 | > ra-polymers-backend@0.0.1 start:prod:migrate
+2026-04-05 22:07:32.770 | > npm run prisma:migrate:deploy && npm run start:prod
+2026-04-05 22:07:32.770 | 
+2026-04-05 22:07:33.357 | 
+2026-04-05 22:07:33.358 | > ra-polymers-backend@0.0.1 prisma:migrate:deploy
+2026-04-05 22:07:33.358 | > prisma migrate deploy
+2026-04-05 22:07:33.358 | 
+2026-04-05 22:07:34.984 | Environment variables loaded from .env
+2026-04-05 22:07:34.990 | Prisma schema loaded from prisma/schema.prisma
+2026-04-05 22:07:35.018 | Datasource "db": PostgreSQL database "ra_procurement", schema "public" at "db:5432"
+2026-04-05 22:07:35.260 | 
+2026-04-05 22:07:35.261 | 7 migrations found in prisma/migrations
+2026-04-05 22:07:35.266 | 
+2026-04-05 22:07:35.400 | 
+2026-04-05 22:07:35.400 | No pending migrations to apply.
+2026-04-05 22:07:35.632 | ┌─────────────────────────────────────────────────────────┐
+2026-04-05 22:07:35.632 | │  Update available 5.10.2 -> 7.6.0                       │
+2026-04-05 22:07:35.632 | │                                                         │
+2026-04-05 22:07:35.642 | │  This is a major update - please follow the guide at    │
+2026-04-05 22:07:35.642 | │  https://pris.ly/d/major-version-upgrade                │
+2026-04-05 22:07:35.642 | │                                                         │
+2026-04-05 22:07:35.642 | │  Run the following to update                            │
+2026-04-05 22:07:35.642 | │    npm i --save-dev prisma@latest                       │
+2026-04-05 22:07:35.642 | │    npm i @prisma/client@latest                          │
+2026-04-05 22:07:35.642 | └─────────────────────────────────────────────────────────┘
+2026-04-05 22:07:36.261 | 
+2026-04-05 22:07:36.261 | > ra-polymers-backend@0.0.1 start:prod
+2026-04-05 22:07:36.261 | > node dist/main
+2026-04-05 22:07:36.261 | 
+2026-04-05 22:07:37.988 | node:internal/modules/cjs/loader:1661
+2026-04-05 22:07:37.988 |   return process.dlopen(module, path.toNamespacedPath(filename));
+2026-04-05 22:07:37.988 |                  ^
+2026-04-05 22:07:37.988 | 
+2026-04-05 22:07:37.988 | Error: /app/node_modules/bcrypt/lib/binding/napi-v3/bcrypt_lib.node: invalid ELF header
+2026-04-05 22:07:37.988 |     at Module._extensions..node (node:internal/modules/cjs/loader:1661:18)
+2026-04-05 22:07:37.988 |     at Module.load (node:internal/modules/cjs/loader:1266:32)
+2026-04-05 22:07:37.988 |     at Module._load (node:internal/modules/cjs/loader:1091:12)
+2026-04-05 22:07:37.988 |     at Module.require (node:internal/modules/cjs/loader:1289:19)
+2026-04-05 22:07:37.988 |     at require (node:internal/modules/helpers:182:18)
+2026-04-05 22:07:37.988 |     at Object.<anonymous> (/app/node_modules/bcrypt/bcrypt.js:6:16)
+2026-04-05 22:07:37.988 |     at Module._compile (node:internal/modules/cjs/loader:1521:14)
+2026-04-05 22:07:37.988 |     at Module._extensions..js (node:internal/modules/cjs/loader:1623:10)
+2026-04-05 22:07:37.988 |     at Module.load (node:internal/modules/cjs/loader:1266:32)
+2026-04-05 22:07:37.988 |     at Module._load (node:internal/modules/cjs/loader:1091:12) {
+2026-04-05 22:07:37.988 |   code: 'ERR_DLOPEN_FAILED'
+2026-04-05 22:07:37.988 | }
+2026-04-05 22:07:37.988 | 
+2026-04-05 22:07:37.988 | Node.js v20.20.2
+2026-04-05 22:07:41.533 | 
+2026-04-05 22:07:41.534 | > ra-polymers-backend@0.0.1 start:prod:migrate
+2026-04-05 22:07:41.534 | > npm run prisma:migrate:deploy && npm run start:prod
+2026-04-05 22:07:41.534 | 
+2026-04-05 22:07:42.199 | 
+2026-04-05 22:07:42.200 | > ra-polymers-backend@0.0.1 prisma:migrate:deploy
+2026-04-05 22:07:42.200 | > prisma migrate deploy
+2026-04-05 22:07:42.200 | 
+2026-04-05 22:07:43.973 | Environment variables loaded from .env
+2026-04-05 22:07:43.977 | Prisma schema loaded from prisma/schema.prisma
+2026-04-05 22:07:44.031 | Datasource "db": PostgreSQL database "ra_procurement", schema "public" at "db:5432"
+2026-04-05 22:07:44.322 | 
+2026-04-05 22:07:44.322 | 7 migrations found in prisma/migrations
+2026-04-05 22:07:44.322 | 
+2026-04-05 22:07:44.544 | 
+2026-04-05 22:07:44.545 | No pending migrations to apply.
+2026-04-05 22:07:45.503 | 
+2026-04-05 22:07:45.503 | > ra-polymers-backend@0.0.1 start:prod
+2026-04-05 22:07:45.503 | > node dist/main
+2026-04-05 22:07:45.503 | 
