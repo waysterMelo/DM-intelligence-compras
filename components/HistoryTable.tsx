@@ -15,7 +15,6 @@ import {
   UserRound
 } from 'lucide-react';
 import { Requisition, Status } from '../types';
-import { StatusBadge } from './StatusBadge';
 
 interface HistoryTableProps {
   requisitions: Requisition[];
@@ -28,39 +27,39 @@ const formatDate = (date: string) => new Intl.DateTimeFormat('pt-BR', { day: '2-
 const statusVisuals = {
   Solicitado: {
     icon: ClipboardClock,
-    card: 'border-blue-200/90 bg-gradient-to-br from-blue-50 via-blue-50 to-sky-100/80 hover:border-blue-300 hover:shadow-blue-200/70',
-    iconWrap: 'bg-blue-600 text-white shadow-blue-200',
-    panel: 'border-blue-100 bg-white/70'
+    card: 'border-blue-300/40 bg-gradient-to-br from-[#2563EB] via-[#1D4ED8] to-[#0EA5E9] hover:border-white/50 hover:shadow-blue-500/50',
+    iconWrap: 'border-white/30 bg-white/20 text-white shadow-blue-950/25',
+    panel: 'border-white/20 bg-white/15'
   },
   Cotando: {
     icon: SearchCheck,
-    card: 'border-cyan-200/90 bg-gradient-to-br from-cyan-50 via-sky-50 to-blue-100/80 hover:border-cyan-300 hover:shadow-cyan-200/70',
-    iconWrap: 'bg-cyan-600 text-white shadow-cyan-200',
-    panel: 'border-cyan-100 bg-white/70'
+    card: 'border-cyan-300/40 bg-gradient-to-br from-[#0891B2] via-[#0284C7] to-[#2563EB] hover:border-white/50 hover:shadow-cyan-500/50',
+    iconWrap: 'border-white/30 bg-white/20 text-white shadow-cyan-950/25',
+    panel: 'border-white/20 bg-white/15'
   },
   Aprovado: {
     icon: BadgeCheck,
-    card: 'border-emerald-200/90 bg-gradient-to-br from-emerald-50 via-green-50 to-teal-100/75 hover:border-emerald-300 hover:shadow-emerald-200/70',
-    iconWrap: 'bg-emerald-600 text-white shadow-emerald-200',
-    panel: 'border-emerald-100 bg-white/70'
+    card: 'border-emerald-300/40 bg-gradient-to-br from-[#059669] via-[#16A34A] to-[#0F766E] hover:border-white/50 hover:shadow-emerald-500/50',
+    iconWrap: 'border-white/30 bg-white/20 text-white shadow-emerald-950/25',
+    panel: 'border-white/20 bg-white/15'
   },
   Comprado: {
     icon: ShoppingBag,
-    card: 'border-violet-200/90 bg-gradient-to-br from-violet-50 via-purple-50 to-indigo-100/80 hover:border-violet-300 hover:shadow-violet-200/70',
-    iconWrap: 'bg-violet-600 text-white shadow-violet-200',
-    panel: 'border-violet-100 bg-white/70'
+    card: 'border-blue-300/40 bg-gradient-to-br from-[#1E3A8A] via-[#1D4ED8] to-[#4338CA] hover:border-white/50 hover:shadow-blue-500/50',
+    iconWrap: 'border-white/30 bg-white/20 text-white shadow-blue-950/30',
+    panel: 'border-white/20 bg-white/15'
   },
   Entregue: {
     icon: PackageCheck,
-    card: 'border-teal-200/90 bg-gradient-to-br from-teal-50 via-emerald-50 to-green-100/80 hover:border-teal-300 hover:shadow-teal-200/70',
-    iconWrap: 'bg-teal-600 text-white shadow-teal-200',
-    panel: 'border-teal-100 bg-white/70'
+    card: 'border-teal-300/40 bg-gradient-to-br from-[#0F766E] via-[#059669] to-[#16A34A] hover:border-white/50 hover:shadow-teal-500/50',
+    iconWrap: 'border-white/30 bg-white/20 text-white shadow-teal-950/25',
+    panel: 'border-white/20 bg-white/15'
   },
   Rejeitado: {
     icon: Ban,
-    card: 'border-rose-200/90 bg-gradient-to-br from-rose-50 via-red-50 to-orange-100/70 hover:border-rose-300 hover:shadow-rose-200/70',
-    iconWrap: 'bg-rose-600 text-white shadow-rose-200',
-    panel: 'border-rose-100 bg-white/70'
+    card: 'border-rose-300/40 bg-gradient-to-br from-[#E11D48] via-[#DC2626] to-[#F97316] hover:border-white/50 hover:shadow-rose-500/50',
+    iconWrap: 'border-white/30 bg-white/20 text-white shadow-rose-950/25',
+    panel: 'border-white/20 bg-white/15'
   }
 } as const;
 
@@ -79,8 +78,8 @@ export const HistoryTable: React.FC<HistoryTableProps> = ({ requisitions, onItem
   };
 
   return (
-    <section className="flex min-h-[520px] flex-col overflow-hidden rounded-[2rem] border border-blue-100/80 bg-white/60 shadow-soft backdrop-blur-sm" aria-labelledby="history-title">
-      <header className="flex flex-col gap-4 border-b border-blue-100/80 bg-gradient-to-r from-white/90 to-blue-50/80 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+    <section className="flex min-h-[520px] flex-col overflow-hidden rounded-[2rem] border border-blue-200/80 bg-white/75 shadow-xl shadow-blue-300/30 backdrop-blur-sm" aria-labelledby="history-title">
+      <header className="flex flex-col gap-4 border-b border-blue-200/80 bg-gradient-to-r from-white via-blue-50 to-indigo-100 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
         <div>
           <div className="flex items-center gap-2">
             <h2 id="history-title" className="text-lg font-black text-slate-900">Histórico de itens</h2>
@@ -117,38 +116,41 @@ export const HistoryTable: React.FC<HistoryTableProps> = ({ requisitions, onItem
                 type="button"
                 onClick={() => onItemClick?.(requisition)}
                 aria-label={`Abrir detalhes de ${requisition.name}`}
-                className={`group flex h-full min-h-48 w-full flex-col rounded-2xl border p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus:ring-4 focus:ring-blue-200/70 ${visual.card}`}
+                className={`group flex h-full min-h-48 w-full flex-col rounded-2xl border p-4 text-left shadow-lg transition hover:-translate-y-1 hover:shadow-2xl focus:outline-none focus:ring-4 focus:ring-white/70 ${visual.card}`}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex min-w-0 items-start gap-3">
-                    <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl shadow-md ${visual.iconWrap}`} aria-hidden="true">
+                    <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border shadow-lg backdrop-blur-sm ${visual.iconWrap}`} aria-hidden="true">
                       <StatusIcon className="h-4 w-4" />
                     </span>
                     <div className="min-w-0">
-                      <h3 className="break-words text-sm font-black leading-5 text-slate-900 transition group-hover:text-blue-800">{requisition.name}</h3>
-                      <p className="mt-1 truncate font-mono text-[9px] font-bold uppercase tracking-wide text-slate-500/80">{requisition.id}</p>
+                      <h3 className="break-words text-sm font-black leading-5 text-white">{requisition.name}</h3>
+                      <p className="mt-1 truncate font-mono text-[9px] font-bold uppercase tracking-wide text-white/65">{requisition.id}</p>
                     </div>
                   </div>
-                  <StatusBadge status={requisition.status} />
+                  <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-white/25 bg-white/15 px-3 py-1 text-xs font-bold text-white shadow-sm backdrop-blur-sm">
+                    <span className="h-1.5 w-1.5 rounded-full bg-white shadow-[0_0_8px_rgba(255,255,255,0.95)]" />
+                    {requisition.status}
+                  </span>
                 </div>
 
                 <div className="mt-4 grid grid-cols-2 gap-2">
                   <div className={`rounded-xl border p-3 shadow-sm ${visual.panel}`}>
-                    <div className="flex items-center gap-1.5 text-slate-400"><PackageSearch className="h-3.5 w-3.5" /><span className="text-[9px] font-black uppercase tracking-wide">Quantidade</span></div>
-                    <p className="mt-1 text-sm font-black text-slate-800">{requisition.quantity} <span className="text-xs text-slate-500">{requisition.unit}</span></p>
+                    <div className="flex items-center gap-1.5 text-white/70"><PackageSearch className="h-3.5 w-3.5" /><span className="text-[9px] font-black uppercase tracking-wide">Quantidade</span></div>
+                    <p className="mt-1 text-sm font-black text-white">{requisition.quantity} <span className="text-xs text-white/75">{requisition.unit}</span></p>
                   </div>
                   <div className={`min-w-0 rounded-xl border p-3 shadow-sm ${visual.panel}`}>
-                    <div className="flex items-center gap-1.5 text-slate-400"><UserRound className="h-3.5 w-3.5" /><span className="text-[9px] font-black uppercase tracking-wide">Solicitante</span></div>
-                    <p className="mt-1 truncate text-sm font-black text-slate-800">{requisition.requester}</p>
+                    <div className="flex items-center gap-1.5 text-white/70"><UserRound className="h-3.5 w-3.5" /><span className="text-[9px] font-black uppercase tracking-wide">Solicitante</span></div>
+                    <p className="mt-1 truncate text-sm font-black text-white">{requisition.requester}</p>
                   </div>
                 </div>
 
                 <div className="mt-auto flex items-end justify-between gap-3 pt-4">
                   <div className="min-w-0">
-                    <p className="truncate text-[10px] font-black uppercase tracking-wide text-slate-600">{requisition.department}</p>
-                    <p className="mt-1 flex items-center gap-1.5 text-[10px] font-bold text-slate-500"><CalendarDays className="h-3.5 w-3.5" />{formatDate(requisition.requestDate)}</p>
+                    <p className="truncate text-[10px] font-black uppercase tracking-wide text-white/90">{requisition.department}</p>
+                    <p className="mt-1 flex items-center gap-1.5 text-[10px] font-bold text-white/70"><CalendarDays className="h-3.5 w-3.5" />{formatDate(requisition.requestDate)}</p>
                   </div>
-                  <span className="flex shrink-0 items-center gap-1.5 text-[10px] font-black text-blue-700"><Eye className="h-4 w-4" />Ver detalhes</span>
+                  <span className="flex shrink-0 items-center gap-1.5 rounded-lg bg-black/10 px-2 py-1 text-[10px] font-black text-white"><Eye className="h-4 w-4" />Ver detalhes</span>
                 </div>
               </button>
             </article>

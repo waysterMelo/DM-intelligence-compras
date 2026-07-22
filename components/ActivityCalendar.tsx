@@ -32,10 +32,10 @@ export const ActivityCalendar: React.FC<ActivityCalendarProps> = ({ requisitions
   const activeDays = days.filter(day => activityMap[getDayKey(day)]?.length).length;
 
   return (
-    <section className="flex h-fit flex-col rounded-[2rem] border border-blue-400/30 bg-gradient-to-br from-[#1877F2] via-[#166FE5] to-[#0F5FC7] p-4 text-white shadow-xl shadow-blue-200/70 sm:p-5" aria-labelledby="calendar-title">
+    <section className="flex h-fit flex-col rounded-[2rem] border border-blue-300/40 bg-gradient-to-br from-[#071A3D] via-[#0B57D0] to-[#1877F2] p-4 text-white shadow-2xl shadow-blue-500/40 sm:p-5" aria-labelledby="calendar-title">
       <header className="mb-4 flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/20 bg-white/15 text-white shadow-inner"><CalendarDays className="h-5 w-5" /></div>
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/30 bg-white/20 text-white shadow-lg shadow-blue-950/30"><CalendarDays className="h-5 w-5" /></div>
           <div className="min-w-0">
             <h2 id="calendar-title" className="text-base font-black text-white">Calendário</h2>
             <p className="truncate text-[10px] font-black uppercase tracking-[0.14em] text-blue-100">{monthNames[month]} {year}</p>
