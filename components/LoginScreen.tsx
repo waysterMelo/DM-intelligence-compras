@@ -273,15 +273,15 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
                 <div><h4 className="text-sm font-bold text-white">Simulador de TCO</h4><p className="text-[10px] text-slate-400">Comparação comercial de custos</p></div>
               </div>
               <div className="space-y-3">
-                <div className="flex justify-between items-center text-xs"><span className="text-slate-400">Precisão Algorítmica</span><span className="text-white font-mono">99.9%</span></div>
-                <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden"><div className="bg-gradient-to-r from-blue-500 to-indigo-500 w-[99%] h-full rounded-full relative"><div className="absolute right-0 top-0 bottom-0 w-4 bg-white/50 blur-[2px] animate-pulse"></div></div></div>
+                <div className="flex justify-between items-center text-xs"><span className="text-slate-400">Decisão de Compras</span><span className="text-blue-300 font-bold">Rastreável</span></div>
+                <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden"><div className="bg-gradient-to-r from-blue-500 to-indigo-500 w-3/4 h-full rounded-full"></div></div>
               </div>
             </div>
           </div>
 
           <div className="z-20">
             <h2 className="text-4xl font-black text-white leading-tight mb-4 tracking-tight">A engenharia de dados <br/><span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-400">aplicada aos suprimentos.</span></h2>
-            <p className="text-slate-400 font-medium max-w-md leading-relaxed text-sm">Desenvolvido pela Dimelonari Group. Transformamos processos de compras complexos em decisões comerciais comparáveis e rastreáveis.</p>
+            <p className="text-slate-400 font-medium max-w-md leading-relaxed text-sm">Cotações, TCO e conferência de notas em um fluxo único para a equipe de Compras.</p>
           </div>
         </div>
 
@@ -304,7 +304,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
                   {isRegistering ? (step === 1 ? 'Cadastro: Funcionário' : 'Cadastro: Empresa') : 'Acesso Autorizado'}
                 </h3>
                 <p className="text-sm text-slate-400">
-                  {isRegistering ? 'Preencha os dados para configurar seu acesso.' : 'Insira as suas credenciais para aceder ao sistema.'}
+                  {isRegistering ? 'Preencha os dados para configurar seu acesso.' : 'Insira suas credenciais para entrar no sistema.'}
                 </p>
               </div>
 
@@ -402,7 +402,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
             <div className="mt-8 text-center flex flex-col items-center justify-center gap-3">
               <div className="flex items-center gap-2 text-xs text-slate-500 bg-white/5 px-3 py-1.5 rounded-full border border-white/5">
                 <Shield className="w-3 h-3 text-emerald-400" />
-                <span>Conexão Encriptada (SSL/TLS 1.3)</span>
+                <span>Acesso restrito à equipe de Compras</span>
               </div>
               <p className="text-xs text-slate-600 font-medium">© {new Date().getFullYear()} DM Intelligence. Todos os direitos reservados.</p>
             </div>

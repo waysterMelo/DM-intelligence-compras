@@ -90,7 +90,7 @@ function App() {
       />
 
       {/* Main Content */}
-      <main className="flex-1 lg:ml-80 mr-4 lg:mr-8 my-6 lg:my-8 flex flex-col transition-all duration-500 overflow-hidden">
+      <main className="mx-3 my-4 flex min-w-0 flex-1 flex-col overflow-hidden pb-24 transition-all duration-500 lg:ml-80 lg:mr-8 lg:my-8 lg:pb-0">
         
         {/* Top Header */}
         {view !== 'search' && (
@@ -120,6 +120,7 @@ function App() {
               onManualInvoice={createManualInvoice}
               onXmlInvoice={createXmlInvoice}
               onReconcile={reconcileInvoice}
+              defaultRequester={currentUser.name.split('•')[0].trim()}
             />
           ) : view === 'quotes' ? (
             <PurchasingHub 
