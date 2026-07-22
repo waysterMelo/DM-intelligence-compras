@@ -12,18 +12,21 @@ export class UsersService {
 
     const hashedPassword = await bcrypt.hash(data.password, 10);
 
+    // Validar role contra enum
+    const validRoles = ['BUYER', 'MANAGER', 'ADMIN', 'SPECIALIST'];
+    const role = validRoles.includes(data.role) ? data.role : 'BUYER';
+
     const user = await this.prisma.user.create({
       data: {
         name: data.name,
         username: data.username,
         password: hashedPassword,
-        role: data.role,
-        fornecedorId: data.companyId // Map companyId from frontend to fornecedorId
+        role: role as any,
+        fornecedorId: data.companyId
       },
       include: { fornecedor: true }
     });
 
-    // Map back for frontend compatibility
     return { ...user, company: user.fornecedor };
   }
 

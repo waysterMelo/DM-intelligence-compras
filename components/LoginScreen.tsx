@@ -325,7 +325,13 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
                         </div>
                         <div className="relative group">
                           <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none"><Briefcase className="h-5 w-5 text-slate-500 group-focus-within:text-blue-400" /></div>
-                          <input type="text" placeholder="Cargo / Função" className="block w-full pl-12 pr-4 py-3.5 bg-[#0a0a0a] border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all" value={role} onChange={e => setRole(e.target.value)} />
+                          <select className="block w-full pl-12 pr-4 py-3.5 bg-[#0a0a0a] border border-white/10 rounded-xl text-white focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all appearance-none cursor-pointer" value={role} onChange={e => setRole(e.target.value)}>
+                            <option value="" disabled>Selecione o Cargo / Função</option>
+                            <option value="BUYER">Comprador</option>
+                            <option value="MANAGER">Gerente</option>
+                            <option value="ADMIN">Administrador</option>
+                            <option value="SPECIALIST">Especialista</option>
+                          </select>
                         </div>
                       </>
                     )}

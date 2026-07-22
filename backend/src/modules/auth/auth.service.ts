@@ -20,7 +20,13 @@ export class AuthService {
   }
 
   async login(user: any) {
-    const payload = { username: user.username, sub: user.id, role: user.role };
+    // Include tenantId in JWT payload if available on the user record
+    const payload = {
+      username: user.username,
+      sub: user.id,
+      role: user.role,
+      tenantId: user.fornecedor?.tenantId || user.tenantId || undefined
+    };
     return {
       access_token: this.jwtService.sign(payload),
       user: user

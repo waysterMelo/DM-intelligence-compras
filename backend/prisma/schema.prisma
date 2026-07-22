@@ -17,47 +17,80 @@ enum ItemUseType {
   FIXED_ASSET
 }
 
+enum TaxConfidenceLevel {
+  ESTIMATED
+  VALIDATED_BY_REGISTRATION
+  VALIDATED_BY_DOCUMENT
+  BLOCKED
+  EXPERT_REVIEWED
+}
+
+enum TaxCalculationStatus {
+  PENDING
+  SUCCESS
+  BLOCKED
+  IN_REVIEW
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  COMPLETED_ALL_SKIPPED
+  PARTIAL
+  FAILED
+  CANCELED
+}
+
+enum JobItemStatus {
+  PENDING
+  PROCESSED
+  SKIPPED
+  FAILED
+}
+
 // Modelo de Empresas (Compradora e Fornecedores)
 model Fornecedor {
-  id          String   @id @default(uuid())
-  name        String   // Nome/Razão Social
-  cnpj        String   @unique // CNPJ Único
-  taxRegime   String   // SIMPLES | PRESUMIDO | REAL
-  companyRole String   // SUPPLIER | BUYER
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  
-  // Relacionamento: Uma empresa pode dar várias cotações
-  quotes      Quote[]
-  
-  // Relacionamento: Funcionários vinculados
-  users       User[]
+  id              String   @id @default(uuid())
+  name            String // Nome/Razão Social
+  cnpj            String   @unique // CNPJ Único
+  taxRegime       String // SIMPLES | PRESUMIDO | REAL
+  companyRole     String // SUPPLIER | BUYER
+  isActive        Boolean  @default(true)
+  pisCofinsRegime String   @default("CUMULATIVE") // CUMULATIVE | NON_CUMULATIVE
+  isIcmsTaxpayer  Boolean  @default(true)
+  isIpiTaxpayer   Boolean  @default(false)
+  state           String   @default("SP")
+  tenantId        String? // Isolamento Multi-Tenant
+  createdAt       DateTime @default(now())
 
-  // Premissas comerciais de TCO (se for BUYER)
-  taxConfig   TaxConfiguration?
+  // Relacionamento: Uma empresa pode dar várias cotações
+  quotes Quote[]
+
+  // Relacionamento: Funcionários vinculados
+  users User[]
+
+  // Premissas comerciais usadas exclusivamente pelo Simulador de TCO.
+  taxConfig      TaxConfiguration?
   tcoAssumptions TcoAssumption[]
 
   @@map("fornecedores")
 }
 
-// Modelo de Configurações Fiscais Globais/Por Comprador
-// Estrutura legada mantida somente para a migração das premissas atuais.
+// Estrutura legada mantida para migrar os percentuais globais existentes.
 model TaxConfiguration {
-  id                    String   @id @default(uuid())
-  icmsCreditPercentage  Float    @default(100.0)
-  pisCreditPercentage   Float    @default(100.0)
-  cofinsCreditPercentage Float   @default(100.0)
-  ipiCreditPercentage   Float    @default(100.0)
-  
-  fornecedorId          String?  @unique
-  fornecedor            Fornecedor? @relation(fields: [fornecedorId], references: [id], onDelete: SetNull)
-
-  updatedAt             DateTime @updatedAt
+  id                     String      @id @default(uuid())
+  icmsCreditPercentage   Float       @default(100.0)
+  pisCreditPercentage    Float       @default(100.0)
+  cofinsCreditPercentage Float       @default(100.0)
+  ipiCreditPercentage    Float       @default(100.0)
+  fornecedorId           String?     @unique
+  fornecedor             Fornecedor? @relation(fields: [fornecedorId], references: [id], onDelete: SetNull)
+  updatedAt              DateTime    @updatedAt
 
   @@map("tax_configurations")
 }
 
-// Premissas comerciais usadas apenas para estimar o TCO de Compras.
 model TcoAssumption {
   id                String      @id @default(uuid())
   itemUseType       ItemUseType
@@ -73,135 +106,162 @@ model TcoAssumption {
   @@map("tco_assumptions")
 }
 
+enum UserRole {
+  BUYER
+  MANAGER
+  ADMIN
+  SPECIALIST
+}
+
 // Modelo de Usuários do Sistema
 model User {
-  id        String   @id @default(uuid())
-  name      String
-  username  String   @unique
-  password  String
-  role      String   // Cargo (Comprador, Gerente, etc)
-  
+  id       String   @id @default(uuid())
+  name     String
+  username String   @unique
+  password String
+  role     UserRole @default(BUYER)
+
   fornecedorId String
-  fornecedor   Fornecedor  @relation(fields: [fornecedorId], references: [id])
-  
+  fornecedor   Fornecedor @relation(fields: [fornecedorId], references: [id])
+
   createdAt DateTime @default(now())
 }
 
 // Modelo da Requisição de Compra
 model Requisition {
-  id            String   @id @default(uuid())
-  name          String   
-  quantity      Float    
-  unit          String   
-  estimatedCost Float?   
-  finalCost     Float?   
-  paymentTerms  String?  
+  id            String      @id @default(uuid())
+  name          String
+  quantity      Float
+  unit          String
+  estimatedCost Float?
+  finalCost     Float?
+  paymentTerms  String?
   itemUseType   ItemUseType @default(CONSUMPTION)
-  requestDate   DateTime @default(now())
-  deliveryDate  DateTime? 
-  status        String   
-  department    String   
-  priority      String   
-  requester     String   
-  notes         String?  
+  requestDate   DateTime    @default(now())
+  deliveryDate  DateTime?
+  status        String
+  department    String
+  priority      String
+  requester     String
+  notes         String?
 
-  // Fluxo operacional da compra. Compras QUICK permanecem pendentes até a NF.
-  purchaseMode  String   @default("STRATEGIC") // STRATEGIC | QUICK
-  costReconciliationStatus String @default("NOT_REQUIRED")
-  costReconciledAt DateTime?
-  
-  quotes        Quote[]
+  purchaseMode             String    @default("STRATEGIC")
+  costReconciliationStatus String    @default("NOT_REQUIRED")
+  costReconciledAt         DateTime?
+
+  quotes          Quote[]
   purchaseInvoice PurchaseInvoice?
-  
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([purchaseMode, costReconciliationStatus])
 }
 
-// Cotação do fornecedor enriquecida com dados comerciais para estimativa de TCO.
+// Modelo de Cotação de Fornecedor (Enriquecido para TCO Fiscal)
 model Quote {
-  id           String      @id @default(uuid())
-  supplierName String      // Nome legível do fornecedor
-  price        Float       // Preço Unitário Bruto (Preço de Tabela)
-  freight      Float?      @default(0)
-  leadTime     Int?        @default(0)
-  paymentTerms String?     
-  isSelected   Boolean     @default(false)
+  id           String  @id @default(uuid())
+  supplierName String // Nome legível do fornecedor
+  price        Float // Preço Unitário Bruto (Preço de Tabela)
+  freight      Float?  @default(0)
+  leadTime     Int?    @default(0)
+  paymentTerms String?
+  isSelected   Boolean @default(false)
 
-  // --- DADOS INFORMADOS PELO FORNECEDOR ---
-  itemUseType  ItemUseType @default(CONSUMPTION)
-  ncm          String?
-  cest         String?
-  cfop         String?
-  
+  // --- CAMPOS FISCAIS (FASE 1) ---
+  itemUseType   ItemUseType @default(CONSUMPTION)
+  creditNature  String      @default("OTHER") // RESALE | INSUMO | FREIGHT | ENERGY | DEPRECIATION | SERVICE | OTHER
+  ncm           String?
+  cfop          String?
+  cest          String?
+  operationType String      @default("INTERNAL") // INTERNAL | INTERSTATE
+  isMonophase   Boolean?    @default(false)
+  isZeroRate    Boolean?    @default(false)
+  isSuspended   Boolean?    @default(false)
+  isExempt      Boolean?    @default(false)
+
   // ICMS
-  cstIcms      String?     // CST do ICMS
-  csosn        String?     // CSOSN (para Simples Nacional)
-  hasIcmsSt    Boolean     @default(false)
-  icmsRate     Float?
-  icmsValue    Float?
-  
-  // PIS/COFINS
-  cstPis       String?
-  cstCofins    String?
-  pisRate      Float?
-  cofinsRate   Float?
-  pisValue     Float?
-  cofinsValue  Float?
-  
-  // IPI
-  ipiRate      Float?
-  ipiValue     Float?
+  cstIcms   String? // CST do ICMS
+  csosn     String? // CSOSN (para Simples Nacional)
+  hasIcmsSt Boolean @default(false)
+  icmsRate  Float?  @default(0)
+  icmsValue Float?  @default(0)
 
-  // IBS/CBS (transicao da Reforma Tributaria)
+  // PIS/COFINS
+  cstPis      String?
+  cstCofins   String?
+  pisRate     Float?  @default(0)
+  cofinsRate  Float?  @default(0)
+  pisValue    Float?  @default(0)
+  cofinsValue Float?  @default(0)
+
+  // IPI
+  cstIpi   String?
+  ipiRate  Float?  @default(0)
+  ipiValue Float?  @default(0)
+
+  // Referências comerciais da transição tributária, sem regras legais automáticas.
   cstIbsCbs    String?
   taxClassCode String?
-  cbsRate      Float?      @default(0)
-  cbsValue     Float?      @default(0)
-  ibsRate      Float?      @default(0)
-  ibsValue     Float?      @default(0)
+  cbsRate      Float?  @default(0)
+  cbsValue     Float?  @default(0)
+  ibsRate      Float?  @default(0)
+  ibsValue     Float?  @default(0)
 
-  stRate       Float?
-  stValue      Float?
-  fcpRate      Float?
-  fcpValue     Float?
-  difalRate    Float?
-  difalValue   Float?
-  hasFcp       Boolean     @default(false)
-  hasDifal     Boolean     @default(false)
-  ipiTreatment String      @default("ADDITIONAL")
-  stTreatment  String      @default("ADDITIONAL")
-  fcpTreatment String      @default("ADDITIONAL")
-  difalTreatment String    @default("ADDITIONAL")
+  stRate         Float?
+  stValue        Float?
+  fcpRate        Float?
+  fcpValue       Float?
+  difalRate      Float?
+  difalValue     Float?
+  hasFcp         Boolean @default(false)
+  hasDifal       Boolean @default(false)
+  ipiTreatment   String  @default("ADDITIONAL")
+  stTreatment    String  @default("ADDITIONAL")
+  fcpTreatment   String  @default("ADDITIONAL")
+  difalTreatment String  @default("ADDITIONAL")
 
-  // Ajustes comerciais opcionais da premissa por cotação.
   utilizationIcms   Float?
   utilizationPis    Float?
   utilizationCofins Float?
   utilizationIpi    Float?
 
-  // RESULTADOS CENTRALIZADOS DO SIMULADOR DE TCO
-  creditIcms   Float?      @default(0)
-  creditPis    Float?      @default(0)
-  creditCofins Float?      @default(0)
-  creditIpi    Float?      @default(0)
-  netCost      Float?      @default(0) // Custo Líquido Real (TCO - Créditos)
-  creditSource String?     @default("MANUAL")
-  grossTotalCost        Float?
+  // RESULTADOS DO CÁLCULO (Motor Fiscal)
+  creditIcms           Float?  @default(0)
+  creditPis            Float?  @default(0)
+  creditCofins         Float?  @default(0)
+  creditIpi            Float?  @default(0)
+  netCost              Float?  @default(0) // Custo Líquido Real (TCO - Créditos)
+  creditSource         String? @default("MANUAL")
+  grossTotalCost       Float?
   estimatedCreditTotal Float?
   estimatedNetTotal    Float?
-  dataCompleteness     String @default("INCOMPLETE")
-  calculationSource    String @default("SUPPLIER_QUOTE")
+  dataCompleteness     String  @default("INCOMPLETE")
+  calculationSource    String  @default("SUPPLIER_QUOTE")
   tcoMemory            Json?
-  taxMemory    Json?       // Auditoria: Armazena o "porquê" do cálculo em JSON
+  taxMemory            Json? // Auditoria: Armazena o "porquê" do cálculo em JSON
 
   // Relacionamentos
-  fornecedorId  String?    // Link para a empresa cadastrada
-  fornecedor    Fornecedor?   @relation(fields: [fornecedorId], references: [id])
-  
+  fornecedorId String? // Link para a empresa cadastrada
+  fornecedor   Fornecedor? @relation(fields: [fornecedorId], references: [id])
+
+  // --- GOVERNANÇA FISCAL E AUDITORIA (FASE SAAS) ---
+  taxConfidenceLevel   TaxConfidenceLevel   @default(ESTIMATED)
+  taxCalculationStatus TaxCalculationStatus @default(PENDING)
+  lastTaxSnapshotId    String?
+  lastTaxCalculatedAt  DateTime?
+  lastTaxEngineVersion String?
+
   requisitionId String
   requisition   Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+
+  taxSnapshots QuoteTaxSnapshot[]
+  reviewQueue  TaxReviewQueueItem[]
+
+  pendingReview Boolean @default(false) // Flag rápida: quote tem item aberto na fila de revisão
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model PurchaseInvoice {
@@ -241,4 +301,258 @@ model PurchaseInvoice {
   xmlContent                String?     @db.Text
   createdAt                 DateTime    @default(now())
   updatedAt                 DateTime    @updatedAt
+}
+
+// Modelo de Snapshot Fiscal Auditável
+model QuoteTaxSnapshot {
+  id            String   @id @default(uuid())
+  quoteId       String
+  engineVersion String
+  calculatedAt  DateTime @default(now())
+
+  // --- TRILHA DE AUDITORIA & HASH (FASE 2) ---
+  inputJson         Json
+  inputHash         String
+  hashAlgorithm     String @default("SHA-256")
+  hashSchemaVersion String @default("1.0")
+
+  grossCostUnit  Float
+  grossCostTotal Float
+  netCostUnit    Float
+  netCostTotal   Float
+
+  icmsCredit   Float
+  pisCredit    Float
+  cofinsCredit Float
+  ipiCredit    Float
+
+  confidenceLevel     TaxConfidenceLevel   @default(ESTIMATED)
+  calculationStatus   TaxCalculationStatus @default(PENDING)
+  decisionSummaryJson Json?
+  ruleCodesJson       Json?
+  legalBasisJson      Json
+  memoryJson          Json
+
+  quote Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  @@map("quote_tax_snapshots")
+}
+
+model TaxRuleCatalog {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  description String?
+  category    String? // ICMS | PIS | COFINS | IPI | GENERAL
+  severity    String? // BLOCKING | WARNING | INFO
+  appliesTo   Json? // Condições de aplicação (ex: { taxRegime: "REAL", itemUseType: "INDUSTRIAL_INPUT" })
+  version     String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  decisions TaxReviewDecision[] @relation("DecisionRules")
+}
+
+// === FASE 5 — BASE LEGAL PADRONIZADA ===
+
+model TaxLegalBasis {
+  id          String   @id @default(uuid())
+  code        String   @unique // Ex: "CFEB_ART155", "LC123_ART23"
+  name        String // Ex: "CFEB Art. 155 - ICMS"
+  lawType     String // CFEB | LC | DECREASE | PORTARIA | CONVENIO | NOTA_TECNICA
+  lawNumber   String? // Número da lei (ex: "123/2006")
+  article     String? // Artigo específico
+  paragraph   String? // Parágrafo/inciso
+  description String
+  url         String? // Link para texto oficial
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  @@map("tax_legal_basis")
+}
+
+// --- REPROCESSAMENTO EM MASSA (FASE 3) ---
+
+model TaxReprocessingJob {
+  id                String @id @default(uuid())
+  tenantId          String // Obrigatório para isolamento Multi-Tenant
+  requestedByUserId String // Auditoria (Quem disparou) - vindo do contexto auth
+  buyerCompanyId    String // Comprador associado a este job (resolvido na criação)
+
+  scopeType        String // "QUOTE" | "COMPANY" | "DATE_RANGE" | "ENGINE_VERSION" | "TENANT_ALL"
+  scopePayloadJson Json // Parâmetros do Escopo (Ex: { companyId: "xyz" })
+  reason           String // Obrigatório na criação
+
+  engineVersionFrom String?
+  engineVersionTo   String?
+
+  status JobStatus @default(QUEUED)
+
+  totalItems     Int @default(0)
+  processedItems Int @default(0)
+  skippedItems   Int @default(0)
+  failedItems    Int @default(0)
+
+  cancelRequestedAt DateTime? // Para cancelamento cooperativo
+  retryCount        Int       @default(0)
+  maxRetries        Int       @default(3)
+
+  createdAt  DateTime  @default(now())
+  startedAt  DateTime?
+  finishedAt DateTime?
+
+  items TaxReprocessingJobItem[]
+
+  @@map("tax_reprocessing_jobs")
+}
+
+model TaxReprocessingJobItem {
+  id      String @id @default(uuid())
+  jobId   String
+  quoteId String
+
+  oldSnapshotId String?
+  newSnapshotId String?
+
+  oldInputHash String?
+  newInputHash String?
+
+  status       JobItemStatus @default(PENDING)
+  skipReason   String? // Ex: INPUT_HASH_UNCHANGED
+  errorMessage String?
+
+  retryCount Int @default(0)
+  maxRetries Int @default(3)
+
+  startedAt  DateTime?
+  finishedAt DateTime?
+
+  job TaxReprocessingJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@map("tax_reprocessing_job_items")
+}
+
+// === FASE 4 — REVISÃO ESPECIALIZADA ===
+
+enum ReviewStatus {
+  OPEN
+  ASSIGNED
+  IN_REVIEW
+  RESOLVED
+  DISMISSED
+}
+
+enum ReviewReasonCode {
+  LOW_CONFIDENCE
+  BLOCKED
+  HIGH_TAX_DELTA
+  RULE_CONFLICT
+  MANUAL_AUDIT_REQUESTED
+  DOCUMENT_MISMATCH
+  MISSING_CRITICAL_TAX_DATA
+}
+
+enum ReviewOutcome {
+  CALCULATION_ACCEPTED // Especialista validou o cálculo automático
+  CALCULATION_ADJUSTED // Especialista ajustou manualmente os valores
+  CALCULATION_REJECTED // Especialista rejeitou e marcou como manual
+  ESCALATED // Encaminhado para nível superior
+}
+
+model TaxReviewQueueItem {
+  id         String           @id @default(uuid())
+  tenantId   String // Isolamento multi-tenant
+  quoteId    String // Cotação em revisão
+  reasonCode ReviewReasonCode // Código padronizado do motivo
+  reasonText String? // Descrição livre complementar (opcional)
+  severity   ReviewSeverity   @default(MEDIUM)
+
+  status           ReviewStatus @default(OPEN)
+  assignedToUserId String? // Especialista responsável
+  resolvedByUserId String? // Quem resolveu
+
+  oldSnapshotId String? // Snapshot que gerou a revisão
+  newSnapshotId String? // Snapshot recalculado (se houver)
+
+  notes           String? // Notas do especialista
+  resolutionNotes String? // Explicação da decisão
+
+  createdAt  DateTime  @default(now())
+  assignedAt DateTime?
+  resolvedAt DateTime?
+
+  quote     Quote               @relation(fields: [quoteId], references: [id])
+  decisions TaxReviewDecision[]
+
+  @@index([tenantId, status])
+  @@index([assignedToUserId, status])
+  @@index([reasonCode, severity])
+  @@map("tax_review_queue_items")
+}
+
+enum ReviewSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model TaxReviewDecision {
+  id           String @id @default(uuid())
+  reviewItemId String
+  tenantId     String
+
+  outcome            ReviewOutcome
+  adjustedValues     Json? // Valores ajustados pelo especialista (se applicable)
+  explanation        String? // Explicação estruturada do especialista
+  reasonCode         ReviewReasonCode? // Código oficial vinculado à abertura
+  severityAtDecision String? // Snapshot da severity no momento da decisão
+  ruleCodes          String[] // Códigos de regra aplicados
+  legalBasisRef      String? // Base legal citada
+
+  // Trilha auditável: snapshot do item no momento da decisão
+  itemStatusAtDecision String? // Status do review item ao decidir
+  severitySnapshot     String? // Severity do item ao decidir
+
+  createdAt       DateTime @default(now())
+  createdByUserId String
+
+  reviewItem   TaxReviewQueueItem @relation(fields: [reviewItemId], references: [id], onDelete: Cascade)
+  appliedRules TaxRuleCatalog[]   @relation("DecisionRules")
+
+  @@index([tenantId, outcome])
+  @@index([reasonCode])
+  @@map("tax_review_decisions")
+}
+
+// === FASE C — THRESHOLDS CONFIGURAVEIS E INTEGRACAO AUTOMATICA ===
+
+model TaxReviewThreshold {
+  id       String @id @default(uuid())
+  tenantId String // Isolamento multi-tenant
+
+  // Gatilho para abertura automatica
+  triggerType ReviewTriggerType // BLOCKED, LOW_CONFIDENCE, HIGH_TAX_DELTA, RULE_CONFLICT, MISSING_DATA
+
+  // Parametros de threshold
+  minTaxAmount Float? // Valor minimo de imposto para acionar review (null = sempre)
+  deltaPercent Float? // Delta fiscal percentual para acionar review (null = nao aplicavel)
+  severity     ReviewSeverity @default(MEDIUM) // Severidade default para este trigger
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, triggerType])
+  @@map("tax_review_thresholds")
+}
+
+enum ReviewTriggerType {
+  BLOCKED
+  LOW_CONFIDENCE
+  HIGH_TAX_DELTA
+  RULE_CONFLICT
+  MISSING_DATA
+  MANUAL_REQUEST
 }
