@@ -2,13 +2,13 @@ import React from 'react';
 import { 
   Hexagon, Plus, ShoppingBag, List, LayoutGrid, Search, 
   Building2, ChevronRight, User, Settings, LogOut,
-  BarChart3, Layers, Zap, Briefcase, Sparkles
+  BarChart3, Layers, Zap, Briefcase, Sparkles, Gauge
 } from 'lucide-react';
 import { Requisition, Company } from '../types';
 
 interface SidebarProps {
-  currentView: 'table' | 'dashboard' | 'quotes' | 'search' | 'companies';
-  onViewChange: (view: 'table' | 'dashboard' | 'quotes' | 'search' | 'companies') => void;
+  currentView: 'table' | 'dashboard' | 'quotes' | 'quick' | 'search' | 'companies';
+  onViewChange: (view: 'table' | 'dashboard' | 'quotes' | 'quick' | 'search' | 'companies') => void;
   onNewRequest: () => void;
   requisitions: Requisition[];
   currentUser?: { name: string, company: Company } | null;
@@ -16,6 +16,7 @@ interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, onNewRequest, requisitions, currentUser }) => {
   const pendingCount = requisitions.filter(r => r.status === 'Solicitado' || r.status === 'Cotando').length;
+  const quickPendingCount = requisitions.filter(r => r.purchaseMode === 'QUICK' && r.taxStatus === 'PENDING_INVOICE').length;
 
   const NavButton = ({ view, icon: Icon, label, badge }: { view: any, icon: any, label: string, badge?: number }) => {
 // ... (rest of NavButton)
@@ -77,6 +78,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, onN
           </div>
           <div className="space-y-1.5">
             <NavButton view="quotes" icon={ShoppingBag} label="QG Estratégico" badge={pendingCount} />
+            <NavButton view="quick" icon={Gauge} label="Compras Rápidas" badge={quickPendingCount} />
             <NavButton view="table" icon={List} label="Histórico Geral" />
             <NavButton view="search" icon={Search} label="Busca Inteligente" />
           </div>

@@ -29,6 +29,16 @@ export class CompaniesController {
     return this.companiesService.findBuyer();
   }
 
+  @Get('tax-config')
+  async getTaxConfig() {
+    return this.companiesService.getTaxConfig();
+  }
+
+  @Patch('tax-config')
+  async updateTaxConfig(@Body() data: any) {
+    return this.companiesService.updateTaxConfig(data);
+  }
+
   // Rota PATCH /companies/:id -> Atualiza dados da empresa
   @Patch(':id')
   async update(@Param('id') id: string, @Body() data: any) {

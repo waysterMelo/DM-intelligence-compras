@@ -7,6 +7,8 @@ export type Department = 'Produção' | 'Ferramentaria' | 'Manutenção' | 'Escr
 export type TaxRegime = 'SIMPLES' | 'PRESUMIDO' | 'REAL';
 export type CompanyRole = 'SUPPLIER' | 'BUYER';
 export type ItemUseType = 'RESALE' | 'INDUSTRIAL_INPUT' | 'CONSUMPTION' | 'FIXED_ASSET';
+export type PurchaseMode = 'STRATEGIC' | 'QUICK';
+export type TaxStatus = 'NOT_STARTED' | 'PENDING_INVOICE' | 'CALCULATED';
 
 export interface Company {
   id: string;
@@ -44,10 +46,23 @@ export interface SupplierQuote {
   ipiRate?: number;
   ipiValue?: number;
 
+  cstIbsCbs?: string;
+  taxClassCode?: string;
+  cbsRate?: number;
+  cbsValue?: number;
+  ibsRate?: number;
+  ibsValue?: number;
+
+  utilizationIcms?: number;
+  utilizationPis?: number;
+  utilizationCofins?: number;
+  utilizationIpi?: number;
+
   // Resultados Fiscais (Custo Efetivo)
   creditIcms?: number;
   creditPis?: number;
   creditCofins?: number;
+  creditIpi?: number;
   netCost?: number;     // Custo Líquido Real (impacto no caixa)
   creditSource?: 'NF' | 'CALCULATED' | 'MANUAL';
   taxMemory?: any;      // Memória de cálculo auditável
@@ -73,7 +88,33 @@ export interface Requisition {
   priority: Priority;
   requester: string;
   notes?: string;
+  purchaseMode?: PurchaseMode;
+  taxStatus?: TaxStatus;
+  invoiceNumber?: string;
+  invoiceAccessKey?: string;
+  invoiceIssueDate?: string;
+  taxReviewedAt?: string;
   quotes: SupplierQuote[];
+}
+
+export interface QuickPurchaseInput {
+  name: string;
+  quantity: number;
+  unit: string;
+  unitPrice: number;
+  freight?: number;
+  supplierId: string;
+  department: Department;
+  requester: string;
+  paymentTerms?: string;
+  notes?: string;
+}
+
+export interface QuickPurchaseTaxInput {
+  invoiceNumber: string;
+  invoiceAccessKey?: string;
+  invoiceIssueDate: string;
+  quote: SupplierQuote;
 }
 
 export interface StatsData {

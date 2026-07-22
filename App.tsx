@@ -17,6 +17,7 @@ import { ItemDetailsModal } from './components/ItemDetailsModal';
 import { CompanyManager } from './components/CompanyManager';
 import { PurchasingHub } from './components/PurchasingHub';
 import { LoginScreen } from './components/LoginScreen';
+import { QuickPurchases } from './components/QuickPurchases';
 
 function App() {
   const [currentUser, setCurrentUser] = useState<{ name: string, company: Company } | null>(null);
@@ -28,6 +29,8 @@ function App() {
     addRequisitionsFromText, 
     updateStatus,
     updateQuotes,
+    createQuickPurchase,
+    finalizeQuickPurchaseTax,
     deleteRequisition,
     searchTerm, setSearchTerm,
     statusFilter, setStatusFilter,
@@ -35,7 +38,7 @@ function App() {
     isFilterActive, clearFilters
   } = useRequisitions();
 
-  const [view, setView] = useState<'table' | 'dashboard' | 'quotes' | 'search' | 'companies'>('quotes');
+  const [view, setView] = useState<'table' | 'dashboard' | 'quotes' | 'quick' | 'search' | 'companies'>('quotes');
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [selectedDayActivity, setSelectedDayActivity] = useState<{date: string, items: Requisition[]} | null>(null);
   const [selectedHistoryItem, setSelectedHistoryItem] = useState<Requisition | null>(null);
@@ -57,6 +60,7 @@ function App() {
       case 'dashboard': return 'Dashboard Gerencial';
       case 'search': return 'Busca Rápida';
       case 'companies': return 'Gestão de Empresas';
+      case 'quick': return 'Compras Rápidas';
       default: return 'QG de Compras Estratégico';
     }
   };
@@ -67,6 +71,7 @@ function App() {
       case 'dashboard': return 'Indicadores de performance e saving.';
       case 'search': return 'Pesquisa de preços e fornecedores históricos.';
       case 'companies': return 'Cadastro de fornecedores e regimes tributários.';
+      case 'quick': return 'Compre agora e regularize os impostos quando a nota fiscal chegar.';
       default: return `Fila de Suprimentos: ${stats.pendingCount} itens aguardando ação.`;
     }
   };
@@ -106,6 +111,12 @@ function App() {
             <QuickSearch requisitions={requisitions} />
           ) : view === 'companies' ? (
             <CompanyManager />
+          ) : view === 'quick' ? (
+            <QuickPurchases
+              requisitions={requisitions}
+              onCreate={createQuickPurchase}
+              onFiscalEntry={finalizeQuickPurchaseTax}
+            />
           ) : view === 'quotes' ? (
             <PurchasingHub 
               requisitions={requisitions} 

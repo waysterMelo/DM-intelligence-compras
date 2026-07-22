@@ -33,7 +33,26 @@ model Fornecedor {
   // Relacionamento: Funcionários vinculados
   users       User[]
 
+  // Configuração Fiscal (se for BUYER)
+  taxConfig   TaxConfiguration?
+
   @@map("fornecedores")
+}
+
+// Modelo de Configurações Fiscais Globais/Por Comprador
+model TaxConfiguration {
+  id                    String   @id @default(uuid())
+  icmsCreditPercentage  Float    @default(100.0)
+  pisCreditPercentage   Float    @default(100.0)
+  cofinsCreditPercentage Float   @default(100.0)
+  ipiCreditPercentage   Float    @default(100.0)
+  
+  fornecedorId          String?  @unique
+  fornecedor            Fornecedor? @relation(fields: [fornecedorId], references: [id], onDelete: SetNull)
+
+  updatedAt             DateTime @updatedAt
+
+  @@map("tax_configurations")
 }
 
 // Modelo de Usuários do Sistema
@@ -67,11 +86,22 @@ model Requisition {
   priority      String   
   requester     String   
   notes         String?  
+
+  // Fluxo operacional da compra. Compras QUICK nascem sem apuracao fiscal e
+  // permanecem pendentes ate a chegada da nota do fornecedor.
+  purchaseMode  String   @default("STRATEGIC") // STRATEGIC | QUICK
+  taxStatus     String   @default("NOT_STARTED") // NOT_STARTED | PENDING_INVOICE | CALCULATED
+  invoiceNumber String?
+  invoiceAccessKey String?
+  invoiceIssueDate DateTime?
+  taxReviewedAt DateTime?
   
   quotes        Quote[]
   
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+
+  @@index([purchaseMode, taxStatus])
 }
 
 // Modelo de Cotação de Fornecedor (Enriquecido para TCO Fiscal)
@@ -106,10 +136,25 @@ model Quote {
   ipiRate      Float?      @default(0)
   ipiValue     Float?      @default(0)
 
+  // IBS/CBS (transicao da Reforma Tributaria)
+  cstIbsCbs    String?
+  taxClassCode String?
+  cbsRate      Float?      @default(0)
+  cbsValue     Float?      @default(0)
+  ibsRate      Float?      @default(0)
+  ibsValue     Float?      @default(0)
+
+  // PERCENTUAIS DE APROVEITAMENTO ESPECÍFICOS DO ITEM (Sugeridos ou Manuais)
+  utilizationIcms   Float?   @default(100.0)
+  utilizationPis    Float?   @default(100.0)
+  utilizationCofins Float?   @default(100.0)
+  utilizationIpi    Float?   @default(100.0)
+
   // RESULTADOS DO CÁLCULO (Motor Fiscal)
   creditIcms   Float?      @default(0)
   creditPis    Float?      @default(0)
   creditCofins Float?      @default(0)
+  creditIpi    Float?      @default(0)
   netCost      Float?      @default(0) // Custo Líquido Real (TCO - Créditos)
   creditSource String?     @default("MANUAL")
   taxMemory    Json?       // Auditoria: Armazena o "porquê" do cálculo em JSON

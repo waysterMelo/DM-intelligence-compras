@@ -1,22 +1,84 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma.service';
 import { TaxCreditService, TaxContext } from '../tax-engine/tax-credit.service';
-import { CompaniesService } from '../companies/companies.service';
 import { ItemUseType } from '@prisma/client';
 
 @Injectable()
 export class RequisitionsService {
   constructor(
     private prisma: PrismaService,
-    private taxCreditService: TaxCreditService,
-    private companiesService: CompaniesService
+    private taxCreditService: TaxCreditService
   ) {}
 
   // Busca todas as requisições ordenadas por data
   async findAll() {
-    return this.prisma.requisition.findMany({
+    const requisitions = await this.prisma.requisition.findMany({
       include: { quotes: { include: { fornecedor: true } } },
       orderBy: { requestDate: 'desc' }
+    });
+
+    return requisitions.map(requisition => ({
+      ...requisition,
+      quotes: requisition.quotes.map(quote => ({
+        ...quote,
+        companyId: quote.fornecedorId,
+        company: quote.fornecedor,
+      })),
+    }));
+  }
+
+  async createQuickPurchase(data: any) {
+    const name = String(data.name || '').trim();
+    const supplierId = String(data.supplierId || '').trim();
+    const quantity = Number(data.quantity);
+    const unitPrice = Number(data.unitPrice);
+    const freight = Number(data.freight || 0);
+
+    if (!name || !supplierId || !Number.isFinite(quantity) || quantity <= 0) {
+      throw new BadRequestException('Item, fornecedor e quantidade positiva são obrigatórios.');
+    }
+    if (!Number.isFinite(unitPrice) || unitPrice < 0 || !Number.isFinite(freight) || freight < 0) {
+      throw new BadRequestException('Preço e frete devem ser valores positivos.');
+    }
+
+    const supplier = await this.prisma.fornecedor.findFirst({
+      where: { id: supplierId, companyRole: 'SUPPLIER', isActive: true },
+    });
+    if (!supplier) throw new NotFoundException('Fornecedor ativo não encontrado.');
+
+    // finalCost é unitário em todo o sistema; o frete total é rateado para que
+    // dashboards não multipliquem um total de pedido pela quantidade novamente.
+    const finalUnitCost = unitPrice + (freight / quantity);
+    return this.prisma.requisition.create({
+      data: {
+        name,
+        quantity,
+        unit: String(data.unit || 'un').trim() || 'un',
+        estimatedCost: finalUnitCost,
+        finalCost: finalUnitCost,
+        paymentTerms: String(data.paymentTerms || '').trim() || null,
+        department: String(data.department || 'Produção'),
+        priority: 'Normal',
+        requester: String(data.requester || '').trim() || 'Compras',
+        notes: String(data.notes || '').trim() || null,
+        status: 'Comprado',
+        purchaseMode: 'QUICK',
+        taxStatus: 'PENDING_INVOICE',
+        quotes: {
+          create: {
+            fornecedorId: supplier.id,
+            supplierName: supplier.name,
+            price: unitPrice,
+            freight,
+            paymentTerms: String(data.paymentTerms || '').trim(),
+            isSelected: true,
+            itemUseType: 'CONSUMPTION',
+            creditSource: 'PENDING_INVOICE',
+            netCost: null,
+          },
+        },
+      },
+      include: { quotes: { include: { fornecedor: true } } },
     });
   }
 
@@ -66,96 +128,179 @@ export class RequisitionsService {
 
   // Atualiza o Mapa de Cotação da Requisição com Inteligência Fiscal (Motor de Créditos)
   async updateQuotes(id: string, quotes: any[]) {
-    // 1. Busca o Comprador (RA Polymers) para saber o regime fiscal
-    const buyer = await this.companiesService.findBuyer();
+    const buyer = await this.prisma.fornecedor.findFirst({
+      where: { companyRole: 'BUYER' },
+      include: { taxConfig: true },
+    });
     const requisition = await this.prisma.requisition.findUnique({ where: { id } });
-
     if (!buyer || !requisition) {
-      throw new Error("Comprador ou Requisição não encontrados");
+      throw new NotFoundException('Comprador ou requisição não encontrados.');
     }
 
-    // 2. Apaga as cotações existentes desta requisição
-    await this.prisma.quote.deleteMany({ where: { requisitionId: id } });
+    const utilizationConfig = {
+      icms: buyer.taxConfig?.icmsCreditPercentage ?? 100,
+      pis: buyer.taxConfig?.pisCreditPercentage ?? 100,
+      cofins: buyer.taxConfig?.cofinsCreditPercentage ?? 100,
+      ipi: buyer.taxConfig?.ipiCreditPercentage ?? 100,
+    };
 
-    // 3. Atualiza o itemUseType da requisição se vier em alguma cotação (sincronização)
-    if (quotes.length > 0 && quotes[0].itemUseType) {
-      await this.prisma.requisition.update({
-        where: { id },
-        data: { itemUseType: quotes[0].itemUseType as ItemUseType }
-      });
-    }
-
-    // 4. Processa cada cotação usando o Motor de Créditos
-    const processedQuotes = await Promise.all(quotes.map(async (q) => {
-      const currentItemUseType = q.itemUseType || requisition.itemUseType || 'INDUSTRIAL_INPUT';
+    // Calcula e valida antes de apagar. Uma cotação inválida não pode destruir
+    // o mapa de fornecedores que já estava persistido.
+    const processedQuotes = await Promise.all(quotes.map(async q => {
+      const currentItemUseType = q.itemUseType || requisition.itemUseType || 'CONSUMPTION';
+      const common = {
+        supplierName: q.supplierName || 'Fornecedor avulso',
+        price: Math.max(0, Number(q.price) || 0),
+        freight: Math.max(0, Number(q.freight) || 0),
+        leadTime: Math.max(0, Number(q.leadTime) || 0),
+        paymentTerms: q.paymentTerms || '',
+        isSelected: Boolean(q.isSelected),
+        itemUseType: currentItemUseType as ItemUseType,
+        ipiRate: q.ipiRate || 0,
+        ipiValue: q.ipiValue,
+        icmsRate: q.icmsRate || 0,
+        icmsValue: q.icmsValue,
+        pisRate: q.pisRate || 0,
+        pisValue: q.pisValue,
+        cofinsRate: q.cofinsRate || 0,
+        cofinsValue: q.cofinsValue,
+        cbsRate: q.cbsRate || 0,
+        cbsValue: q.cbsValue || 0,
+        ibsRate: q.ibsRate || 0,
+        ibsValue: q.ibsValue || 0,
+        cstIcms: q.cstIcms,
+        csosn: q.csosn,
+        cstPis: q.cstPis,
+        cstCofins: q.cstCofins,
+        cstIbsCbs: q.cstIbsCbs,
+        taxClassCode: q.taxClassCode,
+      };
 
       if (!q.companyId) {
         return {
-          supplierName: q.supplierName || 'Fornecedor avulso',
-          price: q.price || 0,
-          freight: q.freight || 0,
-          leadTime: q.leadTime || 0,
-          paymentTerms: q.paymentTerms || '',
-          isSelected: q.isSelected,
-          itemUseType: currentItemUseType as ItemUseType,
-          ipiRate: q.ipiRate || 0,
-          icmsRate: q.icmsRate || 0,
-          pisRate: q.pisRate || 0,
-          cofinsRate: q.cofinsRate || 0,
-          netCost: (q.price || 0) + ((q.freight || 0) / (requisition.quantity || 1)) + ((q.price || 0) * ((q.ipiRate || 0) / 100))
+          ...common,
+          creditSource: q.creditSource || 'MANUAL',
+          netCost: common.price + (common.freight / (requisition.quantity || 1)) + (common.ipiValue ?? common.price * (common.ipiRate / 100)),
         };
       }
 
       const supplier = await this.prisma.fornecedor.findUnique({ where: { id: q.companyId } });
-      if (!supplier) throw new Error("Fornecedor não encontrado");
+      if (!supplier) throw new NotFoundException('Fornecedor não encontrado.');
+
+      const hasManualUtilization = !['NF', 'PENDING_INVOICE'].includes(q.creditSource) &&
+        [q.utilizationIcms, q.utilizationPis, q.utilizationCofins, q.utilizationIpi]
+          .some(value => value !== undefined && value !== null);
+      const manualUtilization = hasManualUtilization ? {
+        icms: q.utilizationIcms,
+        pis: q.utilizationPis,
+        cofins: q.utilizationCofins,
+        ipi: q.utilizationIpi,
+      } : undefined;
 
       const taxCtx: TaxContext = {
         buyerRegime: buyer.taxRegime,
         supplierRegime: supplier.taxRegime,
-        // Usa o tipo definido na cotação se houver, senão usa o da requisição, senão padrão
         itemUseType: currentItemUseType,
-        price: q.price || 0,
+        price: common.price,
         quantity: requisition.quantity || 1,
-        freight: q.freight || 0,
-        ipiRate: q.ipiRate || 0,
-        icmsRate: q.icmsRate || 0,
-        pisRate: q.pisRate || 0,
-        cofinsRate: q.cofinsRate || 0
+        freight: common.freight,
+        ipiRate: common.ipiRate,
+        ipiValue: common.ipiValue,
+        icmsRate: common.icmsRate,
+        icmsValue: common.icmsValue,
+        pisRate: common.pisRate,
+        pisValue: common.pisValue,
+        cofinsRate: common.cofinsRate,
+        cofinsValue: common.cofinsValue,
+        cbsRate: common.cbsRate,
+        cbsValue: common.cbsValue,
+        ibsRate: common.ibsRate,
+        ibsValue: common.ibsValue,
+        cstIcms: common.cstIcms,
+        csosn: common.csosn,
+        cstPis: common.cstPis,
+        cstCofins: common.cstCofins,
+        manualUtilization,
+        utilizationConfig,
       };
-
       const taxResult = this.taxCreditService.calculate(taxCtx);
 
       return {
-        fornecedorId: q.companyId,
+        ...common,
+        fornecedorId: supplier.id,
         supplierName: supplier.name,
-        price: q.price || 0,
-        freight: q.freight || 0,
-        leadTime: q.leadTime || 0,
-        paymentTerms: q.paymentTerms || '',
-        itemUseType: taxCtx.itemUseType as ItemUseType, // Persiste o tipo usado no cálculo
-        ipiRate: q.ipiRate || 0,
-        icmsRate: q.icmsRate || 0,
-        pisRate: q.pisRate || 0,
-        cofinsRate: q.cofinsRate || 0,
-        // Resultados do Motor Fiscal
+        utilizationIcms: manualUtilization?.icms ?? taxResult.taxMemory.finalUtilization.icms,
+        utilizationPis: manualUtilization?.pis ?? taxResult.taxMemory.finalUtilization.pis,
+        utilizationCofins: manualUtilization?.cofins ?? taxResult.taxMemory.finalUtilization.cofins,
+        utilizationIpi: manualUtilization?.ipi ?? taxResult.taxMemory.finalUtilization.ipi,
         creditIcms: taxResult.creditIcms,
         creditPis: taxResult.creditPis,
         creditCofins: taxResult.creditCofins,
+        creditIpi: taxResult.creditIpi,
         netCost: taxResult.netCost,
+        creditSource: q.creditSource || 'NF',
         taxMemory: taxResult.taxMemory as any,
-        isSelected: q.isSelected
       };
     }));
 
-    // 5. Salva no banco
+    return this.prisma.$transaction(async tx => {
+      await tx.quote.deleteMany({ where: { requisitionId: id } });
+      return tx.requisition.update({
+        where: { id },
+        data: {
+          itemUseType: processedQuotes[0]?.itemUseType,
+          quotes: { create: processedQuotes },
+        },
+        include: { quotes: { include: { fornecedor: true } } },
+      });
+    });
+  }
+
+  async finalizeQuickPurchaseTax(id: string, data: any) {
+    const requisition = await this.prisma.requisition.findUnique({
+      where: { id },
+      include: { quotes: true },
+    });
+    if (!requisition || requisition.purchaseMode !== 'QUICK') {
+      throw new NotFoundException('Compra rápida não encontrada.');
+    }
+
+    const invoiceNumber = String(data.invoiceNumber || '').trim();
+    const invoiceAccessKey = String(data.invoiceAccessKey || '').replace(/\D/g, '');
+    const invoiceIssueDate = new Date(data.invoiceIssueDate);
+    if (!invoiceNumber || Number.isNaN(invoiceIssueDate.getTime())) {
+      throw new BadRequestException('Número e data de emissão da nota são obrigatórios.');
+    }
+    if (invoiceAccessKey && invoiceAccessKey.length !== 44) {
+      throw new BadRequestException('A chave de acesso da NF-e deve ter 44 dígitos.');
+    }
+
+    const originalQuote = requisition.quotes.find(quote => quote.isSelected) || requisition.quotes[0];
+    if (!originalQuote?.fornecedorId) {
+      throw new BadRequestException('A compra não possui fornecedor cadastrado.');
+    }
+    await this.updateQuotes(id, [{
+      ...originalQuote,
+      ...data.quote,
+      companyId: originalQuote.fornecedorId,
+      supplierName: originalQuote.supplierName,
+      price: originalQuote.price,
+      freight: originalQuote.freight,
+      paymentTerms: originalQuote.paymentTerms,
+      isSelected: true,
+      creditSource: 'NF',
+    }]);
+
     return this.prisma.requisition.update({
       where: { id },
       data: {
-        quotes: {
-          create: processedQuotes
-        }
+        taxStatus: 'CALCULATED',
+        invoiceNumber,
+        invoiceAccessKey: invoiceAccessKey || null,
+        invoiceIssueDate,
+        taxReviewedAt: new Date(),
       },
-      include: { quotes: { include: { fornecedor: true } } }
+      include: { quotes: { include: { fornecedor: true } } },
     });
   }
 

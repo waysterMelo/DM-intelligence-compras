@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Requisition, Department, Status, Priority, SupplierQuote, StatsData } from '../types';
+import { Requisition, Department, Status, Priority, SupplierQuote, StatsData, QuickPurchaseInput, QuickPurchaseTaxInput } from '../types';
 
 // Pegamos a URL do nosso backend da variável de ambiente que configuramos no .env
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
@@ -99,6 +99,32 @@ export const useRequisitions = () => {
     }
   };
 
+  const createQuickPurchase = async (data: QuickPurchaseInput) => {
+    const response = await fetch(`${API_BASE_URL}/requisitions/quick-purchase`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => null);
+      throw new Error(error?.message || 'Não foi possível registrar a compra rápida.');
+    }
+    await fetchData();
+  };
+
+  const finalizeQuickPurchaseTax = async (id: string, data: QuickPurchaseTaxInput) => {
+    const response = await fetch(`${API_BASE_URL}/requisitions/${id}/fiscal-entry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => null);
+      throw new Error(error?.message || 'Não foi possível registrar a nota fiscal.');
+    }
+    await fetchData();
+  };
+
   // Remove permanentemente uma requisição do banco
   const deleteRequisition = async (id: string) => {
     try {
@@ -153,6 +179,8 @@ export const useRequisitions = () => {
     addRequisitionsFromText,
     updateStatus,
     updateQuotes,
+    createQuickPurchase,
+    finalizeQuickPurchaseTax,
     deleteRequisition
   };
 };

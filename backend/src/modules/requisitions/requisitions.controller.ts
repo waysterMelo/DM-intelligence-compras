@@ -20,6 +20,12 @@ export class RequisitionsController {
     return this.requisitionsService.bulkImportFromText(data.text, data.department);
   }
 
+  // Compra concluída antes da chegada da NF. Impostos ficam explicitamente pendentes.
+  @Post('quick-purchase')
+  async createQuickPurchase(@Body() data: any) {
+    return this.requisitionsService.createQuickPurchase(data);
+  }
+
   // Rota PATCH /requisitions/:id/status -> Atualiza status e custo final
   @Patch(':id/status')
   async updateStatus(
@@ -33,6 +39,11 @@ export class RequisitionsController {
   @Put(':id/quotes')
   async updateQuotes(@Param('id') id: string, @Body() quotes: any[]) {
     return this.requisitionsService.updateQuotes(id, quotes);
+  }
+
+  @Post(':id/fiscal-entry')
+  async finalizeQuickPurchaseTax(@Param('id') id: string, @Body() data: any) {
+    return this.requisitionsService.finalizeQuickPurchaseTax(id, data);
   }
 
   // Rota DELETE /requisitions/:id -> Remove a requisição

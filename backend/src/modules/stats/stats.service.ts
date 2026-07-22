@@ -14,12 +14,16 @@ export class StatsService {
     const totalRequests = await this.prisma.requisition.count();
 
     // 2. Soma de quanto já foi gasto (apenas requisições com status 'Comprado' ou 'Entregue')
-    const totalSpentAggregation = await this.prisma.requisition.aggregate({
-      _sum: { finalCost: true },
+    const completedPurchases = await this.prisma.requisition.findMany({
+      select: { finalCost: true, quantity: true },
       where: {
         status: { in: ['Comprado', 'Entregue'] }
       }
     });
+    const totalSpent = completedPurchases.reduce(
+      (sum, item) => sum + ((item.finalCost || 0) * item.quantity),
+      0,
+    );
 
     // 3. Contagem de requisições pendentes (Ainda não compradas)
     const pendingCount = await this.prisma.requisition.count({
@@ -38,7 +42,7 @@ export class StatsService {
     // Retornamos um objeto formatado exatamente como o seu Frontend espera
     return {
       totalRequests,
-      totalSpent: totalSpentAggregation._sum.finalCost || 0,
+      totalSpent,
       pendingCount,
       completedCount
     };

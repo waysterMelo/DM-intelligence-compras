@@ -3,14 +3,16 @@ import { Company, TaxRegime, CompanyRole } from '../types';
 import { 
   Building2, Plus, Search, Trash2, 
   Edit2, Save, X, ShieldCheck, 
-  Store, UserCheck, AlertCircle
+  Store, UserCheck, AlertCircle, Settings2
 } from 'lucide-react';
+import { TaxSettingsModal } from './TaxSettingsModal';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
 export const CompanyManager: React.FC = () => {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isTaxModalOpen, setIsTaxModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   
   // Form State
@@ -165,15 +167,28 @@ export const CompanyManager: React.FC = () => {
                   </span>
                </div>
                
-               {c.companyRole === 'BUYER' && (
-                 <div className="flex items-center gap-1 text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-1 rounded-lg uppercase">
-                   <UserCheck className="w-3 h-3" /> Responsável
+               {c.companyRole === 'BUYER' ? (
+                 <button 
+                   onClick={() => setIsTaxModalOpen(true)}
+                   className="flex items-center gap-1.5 text-[10px] font-black text-blue-600 bg-blue-50 hover:bg-blue-100 px-3 py-2 rounded-xl uppercase transition-all active:scale-95"
+                 >
+                   <Settings2 className="w-3.5 h-3.5" /> Aproveitamento
+                 </button>
+               ) : (
+                 <div className="flex items-center gap-1 text-[10px] font-black text-slate-400 bg-slate-50 px-2 py-1 rounded-lg uppercase">
+                   Fornecedor
                  </div>
                )}
             </div>
           </div>
         ))}
       </div>
+
+      {/* Modais */}
+      <TaxSettingsModal 
+        isOpen={isTaxModalOpen} 
+        onClose={() => setIsTaxModalOpen(false)} 
+      />
 
       {/* Modal de Cadastro/Edição */}
       {isModalOpen && (

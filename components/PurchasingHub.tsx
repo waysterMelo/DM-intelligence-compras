@@ -33,6 +33,7 @@ export const PurchasingHub: React.FC<PurchasingHubProps> = ({ requisitions, onUp
   const ITEMS_PER_PAGE = 4;
 
   const filteredQueue = requisitions.filter(r => {
+    if (r.purchaseMode === 'QUICK') return false;
     if (statusFilter === 'Pendentes') return r.status === 'Solicitado' || r.status === 'Cotando';
     return r.status === statusFilter;
   });
@@ -130,12 +131,9 @@ export const PurchasingHub: React.FC<PurchasingHubProps> = ({ requisitions, onUp
        credits += icms;
     }
 
-    // 2. PIS/COFINS: Apenas Lucro Real e Fornecedor não Simples
+    // PIS/COFINS: fornecedor do Simples não impede crédito por si só (ADI RFB 15/2007).
     if (buyer?.taxRegime === 'REAL') {
-       const supplier = suppliers.find(s => s.id === quote.companyId);
-       if (supplier?.taxRegime !== 'SIMPLES') {
-          credits += pis + cofins;
-       }
+       credits += pis + cofins;
     }
     
     return { gross, net: gross - credits, credits };
@@ -314,20 +312,14 @@ export const PurchasingHub: React.FC<PurchasingHubProps> = ({ requisitions, onUp
                                <CurrencyInput label="ICMS (%)" prefix="" value={isConsumption ? 0 : (activeQuote?.icmsRate || 0)} onChange={(v) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'icmsRate', v)} color="amber" />
                             </div>
                             <div className="grid grid-cols-2 gap-8 relative">
-                               <div className={isSimplesSupplier ? "opacity-50 pointer-events-none grayscale" : ""}>
-                                  <CurrencyInput label="PIS (%)" prefix="" value={(isSimplesSupplier || isConsumption) ? 0 : (activeQuote?.pisRate || 0)} onChange={(v) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'pisRate', v)} color="amber" />
+                               <div>
+                                  <CurrencyInput label="PIS (%)" prefix="" value={isConsumption ? 0 : (activeQuote?.pisRate || 0)} onChange={(v) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'pisRate', v)} color="amber" />
                                </div>
-                               <div className={isSimplesSupplier ? "opacity-50 pointer-events-none grayscale" : ""}>
-                                  <CurrencyInput label="COFINS (%)" prefix="" value={(isSimplesSupplier || isConsumption) ? 0 : (activeQuote?.cofinsRate || 0)} onChange={(v) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'cofinsRate', v)} color="amber" />
+                               <div>
+                                  <CurrencyInput label="COFINS (%)" prefix="" value={isConsumption ? 0 : (activeQuote?.cofinsRate || 0)} onChange={(v) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'cofinsRate', v)} color="amber" />
                                </div>
                                
-                               {isSimplesSupplier && !isConsumption && (
-                                 <div className="absolute inset-0 flex items-center justify-center z-10">
-                                    <div className="bg-amber-100 text-amber-800 text-[10px] font-bold px-3 py-1.5 rounded-full shadow-sm border border-amber-200 flex items-center gap-2">
-                                       <Ban className="w-3 h-3" /> Fornecedor Simples Nacional (Não gera crédito)
-                                    </div>
-                                 </div>
-                               )}
+                               {isSimplesSupplier && !isConsumption && <p className="col-span-2 mt-2 text-[9px] font-bold text-amber-700">Fornecedor do Simples: confirme na NF os valores e limites de crédito aplicáveis.</p>}
                             </div>
                         </div>
 

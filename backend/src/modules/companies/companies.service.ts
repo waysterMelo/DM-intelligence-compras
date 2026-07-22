@@ -60,7 +60,52 @@ export class CompaniesService {
   // Busca a empresa compradora (RA Polymers) para saber o regime dela
   async findBuyer() {
     return this.prisma.fornecedor.findFirst({
-      where: { companyRole: 'BUYER', isActive: true }
+      where: { companyRole: 'BUYER', isActive: true },
+      include: { taxConfig: true }
+    });
+  }
+
+  // Busca apenas a configuração fiscal do comprador
+  async getTaxConfig() {
+    const buyer = await this.findBuyer();
+    if (!buyer) throw new BadRequestException('Empresa compradora não cadastrada.');
+    
+    const existing = await this.prisma.taxConfiguration.findUnique({
+      where: { fornecedorId: buyer.id }
+    });
+    return existing ?? this.prisma.taxConfiguration.create({
+      data: { fornecedorId: buyer.id }
+    });
+  }
+
+  // Atualiza ou cria as porcentagens de aproveitamento
+  async updateTaxConfig(data: {
+    icmsCreditPercentage?: number;
+    pisCreditPercentage?: number;
+    cofinsCreditPercentage?: number;
+    ipiCreditPercentage?: number;
+  }) {
+    const buyer = await this.findBuyer();
+    if (!buyer) throw new BadRequestException('Empresa compradora não cadastrada.');
+
+    const allowedKeys = [
+      'icmsCreditPercentage', 'pisCreditPercentage',
+      'cofinsCreditPercentage', 'ipiCreditPercentage',
+    ] as const;
+    const sanitized = Object.fromEntries(allowedKeys
+      .filter(key => data[key] !== undefined)
+      .map(key => {
+        const value = Number(data[key]);
+        if (!Number.isFinite(value) || value < 0 || value > 100) {
+          throw new BadRequestException(`${key} deve estar entre 0 e 100.`);
+        }
+        return [key, value];
+      }));
+
+    return this.prisma.taxConfiguration.upsert({
+      where: { fornecedorId: buyer.id },
+      update: sanitized,
+      create: { ...sanitized, fornecedorId: buyer.id }
     });
   }
 

@@ -72,8 +72,6 @@ export const QuoteList: React.FC<QuoteListProps> = ({ requisitions, onUpdateStat
     const base = quote.price || 0;
     const freight = (quote.freight || 0) / (req.quantity || 1);
     
-    // Custo Bruto (Saída de Caixa): Base + Frete + IPI
-    // Assumindo IPI "por fora" e outros "por dentro"
     const ipi = base * ((quote.ipiRate || 0)/100);
     const icms = base * ((quote.icmsRate || 0)/100);
     const pis = base * ((quote.pisRate || 0)/100);
@@ -81,33 +79,37 @@ export const QuoteList: React.FC<QuoteListProps> = ({ requisitions, onUpdateStat
     
     const gross = base + freight + ipi;
 
-    // Regra de Ouro: Uso e Consumo zera crédito
     const itemUseType = quote.itemUseType || req.itemUseType || 'INDUSTRIAL_INPUT';
-    if (itemUseType === 'CONSUMPTION') {
-       return { gross, net: gross };
-    }
+    if (itemUseType === 'CONSUMPTION') return { gross, net: gross };
+
+    // INTELIGÊNCIA DE APROVEITAMENTO (Frontend Preview)
+    let utilIcms = quote.utilizationIcms ?? 100;
+    let utilPis = quote.utilizationPis ?? 100;
+    let utilCofins = quote.utilizationCofins ?? 100;
+    let utilIpi = quote.utilizationIpi ?? 100;
+
+    // Sugestão Automática por CST se não houver valor manual explícito
+    if (quote.cstIcms && !['00', '10', '20', '70'].includes(quote.cstIcms)) utilIcms = 0;
+    if (quote.cstPis && !['50', '51', '52', '53', '54', '55', '56'].includes(quote.cstPis)) utilPis = 0;
+    if (quote.cstCofins && !['50', '51', '52', '53', '54', '55', '56'].includes(quote.cstCofins)) utilCofins = 0;
 
     let credits = 0;
-    
-    // 1. ICMS: Lucro Real ou Presumido
     const isInputOrResale = ['INDUSTRIAL_INPUT', 'RESALE', 'FIXED_ASSET'].includes(itemUseType);
+
     if (isInputOrResale) {
        if (buyer?.taxRegime === 'REAL' || buyer?.taxRegime === 'PRESUMIDO') {
-          credits += icms;
+          credits += icms * (utilIcms / 100);
        }
-    }
-
-    // 2. PIS/COFINS: Apenas Lucro Real e Fornecedor não Simples
-    if (buyer?.taxRegime === 'REAL' && isInputOrResale) {
-       const supplier = suppliers.find(s => s.id === quote.companyId);
-       if (supplier?.taxRegime !== 'SIMPLES') {
-          credits += pis + cofins;
+       if (buyer?.taxRegime === 'REAL') {
+          const supplier = suppliers.find(s => s.id === quote.companyId);
+          if (supplier?.taxRegime !== 'SIMPLES') {
+             credits += (pis * (utilPis / 100)) + (cofins * (utilCofins / 100));
+          }
        }
     }
     
-    // 3. IPI: Apenas Indústria (Real/Presumido) recupera se for insumo
     if (buyer?.taxRegime !== 'SIMPLES' && itemUseType === 'INDUSTRIAL_INPUT') {
-       credits += ipi;
+       credits += ipi * (utilIpi / 100);
     }
 
     return { gross, net: gross - credits };
@@ -261,21 +263,110 @@ export const QuoteList: React.FC<QuoteListProps> = ({ requisitions, onUpdateStat
                   {/* Coluna 2: Impostos e Custo Líquido */}
                   <div className="flex flex-col gap-4">
                     <div className="bg-slate-50/50 p-6 rounded-[2rem] border border-slate-100">
-                      <p className="text-[10px] font-black text-slate-400 uppercase mb-4 flex items-center gap-2">
-                        <Receipt className="w-4 h-4 text-blue-500" /> Impostos (%)
-                      </p>
-                      <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-                        {['ipiRate', 'icmsRate', 'pisRate', 'cofinsRate'].map(field => (
-                          <div key={field}>
-                            <label className="text-[9px] font-black text-slate-500 uppercase mb-1 block ml-1">{field.replace('Rate', '').toUpperCase()}</label>
+                      <div className="flex justify-between items-center mb-4">
+                        <p className="text-[10px] font-black text-slate-400 uppercase flex items-center gap-2">
+                          <Receipt className="w-4 h-4 text-blue-500" /> Inteligência Fiscal
+                        </p>
+                        <div className="flex items-center gap-1 text-[9px] font-bold text-slate-400 bg-white px-2 py-1 rounded-lg border border-slate-100">
+                           <Info className="w-3 h-3" /> Baseado no CST do Item
+                        </div>
+                      </div>
+
+                      <div className="space-y-4">
+                        {/* ICMS Section */}
+                        <div className="grid grid-cols-3 gap-3 items-end border-b border-slate-100 pb-4">
+                          <div className="col-span-1">
+                            <label className="text-[9px] font-black text-slate-500 uppercase mb-1 block">CST ICMS</label>
                             <input 
-                              type="number"
-                              className="w-full bg-white border border-slate-100 px-3 py-2 rounded-xl text-xs font-black text-blue-600 outline-none focus:border-blue-500"
-                              value={(activeQuote as any)[field] || ''}
-                              onChange={(e) => handleLocalUpdate(req.id, activeIdx, field as any, parseFloat(e.target.value) || 0)}
+                              type="text" placeholder="00" maxLength={3}
+                              className="w-full bg-white border border-slate-200 px-3 py-2 rounded-xl text-xs font-black text-slate-700 outline-none focus:border-blue-500"
+                              value={activeQuote.cstIcms || ''}
+                              onChange={(e) => handleLocalUpdate(req.id, activeIdx, 'cstIcms', e.target.value)}
                             />
                           </div>
-                        ))}
+                          <div className="col-span-1">
+                            <label className="text-[9px] font-black text-slate-500 uppercase mb-1 block">Alíquota (%)</label>
+                            <input 
+                              type="number"
+                              className="w-full bg-white border border-slate-200 px-3 py-2 rounded-xl text-xs font-black text-blue-600 outline-none focus:border-blue-500"
+                              value={activeQuote.icmsRate || ''}
+                              onChange={(e) => handleLocalUpdate(req.id, activeIdx, 'icmsRate', parseFloat(e.target.value) || 0)}
+                            />
+                          </div>
+                          <div className="col-span-1">
+                            <label className="text-[9px] font-black text-emerald-600 uppercase mb-1 block">Aproveit. (%)</label>
+                            <input 
+                              type="number" placeholder="100"
+                              className="w-full bg-emerald-50 border border-emerald-100 px-3 py-2 rounded-xl text-xs font-black text-emerald-700 outline-none focus:border-emerald-500"
+                              value={activeQuote.utilizationIcms ?? ''}
+                              onChange={(e) => handleLocalUpdate(req.id, activeIdx, 'utilizationIcms', parseFloat(e.target.value))}
+                            />
+                          </div>
+                        </div>
+
+                        {/* PIS/COFINS Section */}
+                        <div className="grid grid-cols-4 gap-3 items-end">
+                          <div className="col-span-1">
+                            <label className="text-[9px] font-black text-slate-500 uppercase mb-1 block">CST PIS</label>
+                            <input 
+                              type="text" placeholder="50" maxLength={2}
+                              className="w-full bg-white border border-slate-200 px-3 py-2 rounded-xl text-xs font-black text-slate-700 outline-none focus:border-blue-500"
+                              value={activeQuote.cstPis || ''}
+                              onChange={(e) => handleLocalUpdate(req.id, activeIdx, 'cstPis', e.target.value)}
+                            />
+                          </div>
+                          <div className="col-span-1">
+                            <label className="text-[9px] font-black text-slate-500 uppercase mb-1 block">PIS+COF (%)</label>
+                            <div className="flex gap-1">
+                              <input 
+                                type="number" placeholder="P"
+                                className="w-1/2 bg-white border border-slate-200 px-2 py-2 rounded-lg text-[10px] font-black text-blue-600 outline-none"
+                                value={activeQuote.pisRate || ''}
+                                onChange={(e) => handleLocalUpdate(req.id, activeIdx, 'pisRate', parseFloat(e.target.value) || 0)}
+                              />
+                              <input 
+                                type="number" placeholder="C"
+                                className="w-1/2 bg-white border border-slate-200 px-2 py-2 rounded-lg text-[10px] font-black text-blue-600 outline-none"
+                                value={activeQuote.cofinsRate || ''}
+                                onChange={(e) => handleLocalUpdate(req.id, activeIdx, 'cofinsRate', parseFloat(e.target.value) || 0)}
+                              />
+                            </div>
+                          </div>
+                          <div className="col-span-2">
+                             <label className="text-[9px] font-black text-emerald-600 uppercase mb-1 block">Aproveit. PIS/COF (%)</label>
+                             <input 
+                              type="number" placeholder="100"
+                              className="w-full bg-emerald-50 border border-emerald-100 px-3 py-2 rounded-xl text-xs font-black text-emerald-700 outline-none focus:border-emerald-500"
+                              value={activeQuote.utilizationPis ?? ''}
+                              onChange={(e) => {
+                                handleLocalUpdate(req.id, activeIdx, 'utilizationPis', parseFloat(e.target.value));
+                                handleLocalUpdate(req.id, activeIdx, 'utilizationCofins', parseFloat(e.target.value));
+                              }}
+                            />
+                          </div>
+                        </div>
+
+                        {/* IPI Section */}
+                        <div className="grid grid-cols-2 gap-3 items-end pt-2">
+                           <div>
+                              <label className="text-[9px] font-black text-slate-500 uppercase mb-1 block">IPI (%)</label>
+                              <input 
+                                type="number"
+                                className="w-full bg-white border border-slate-200 px-3 py-2 rounded-xl text-xs font-black text-blue-600 outline-none focus:border-blue-500"
+                                value={activeQuote.ipiRate || ''}
+                                onChange={(e) => handleLocalUpdate(req.id, activeIdx, 'ipiRate', parseFloat(e.target.value) || 0)}
+                              />
+                           </div>
+                           <div>
+                              <label className="text-[9px] font-black text-emerald-600 uppercase mb-1 block">Aproveit. IPI (%)</label>
+                              <input 
+                                type="number" placeholder="100"
+                                className="w-full bg-emerald-50 border border-emerald-100 px-3 py-2 rounded-xl text-xs font-black text-emerald-700 outline-none focus:border-emerald-500"
+                                value={activeQuote.utilizationIpi ?? ''}
+                                onChange={(e) => handleLocalUpdate(req.id, activeIdx, 'utilizationIpi', parseFloat(e.target.value))}
+                              />
+                           </div>
+                        </div>
                       </div>
                     </div>
 
