@@ -130,7 +130,7 @@ function App() {
               onDelete={deleteRequisition}
             />
           ) : (
-            <div className="grid items-start gap-5 rounded-[2.5rem] border border-blue-300/70 bg-gradient-to-br from-[#BFDBFE] via-[#C7D2FE] to-[#93C5FD] p-3 shadow-inner shadow-blue-500/20 sm:p-4 xl:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="grid items-start gap-5 rounded-[2.5rem] border border-slate-200 bg-gradient-to-br from-[#F8FAFC] via-[#F3F6FB] to-[#EEF2F7] p-3 shadow-inner shadow-slate-200/70 sm:p-4 xl:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_360px]">
               <div className="min-w-0">
                 <HistoryTable 
                   requisitions={displayData} 

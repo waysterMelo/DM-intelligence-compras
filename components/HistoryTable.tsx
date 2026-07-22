@@ -27,39 +27,39 @@ const formatDate = (date: string) => new Intl.DateTimeFormat('pt-BR', { day: '2-
 const statusVisuals = {
   Solicitado: {
     icon: ClipboardClock,
-    card: 'border-blue-300/40 bg-gradient-to-br from-[#2563EB] via-[#1D4ED8] to-[#0EA5E9] hover:border-white/50 hover:shadow-blue-500/50',
-    iconWrap: 'border-white/30 bg-white/20 text-white shadow-blue-950/25',
-    panel: 'border-white/20 bg-white/15'
+    accent: 'from-blue-600 to-sky-400',
+    iconWrap: 'from-blue-600 to-sky-500 shadow-blue-200',
+    badge: 'border-blue-200 bg-blue-600 text-white shadow-blue-100'
   },
   Cotando: {
     icon: SearchCheck,
-    card: 'border-cyan-300/40 bg-gradient-to-br from-[#0891B2] via-[#0284C7] to-[#2563EB] hover:border-white/50 hover:shadow-cyan-500/50',
-    iconWrap: 'border-white/30 bg-white/20 text-white shadow-cyan-950/25',
-    panel: 'border-white/20 bg-white/15'
+    accent: 'from-amber-500 to-orange-500',
+    iconWrap: 'from-amber-500 to-orange-500 shadow-orange-200',
+    badge: 'border-orange-200 bg-orange-500 text-white shadow-orange-100'
   },
   Aprovado: {
     icon: BadgeCheck,
-    card: 'border-emerald-300/40 bg-gradient-to-br from-[#059669] via-[#16A34A] to-[#0F766E] hover:border-white/50 hover:shadow-emerald-500/50',
-    iconWrap: 'border-white/30 bg-white/20 text-white shadow-emerald-950/25',
-    panel: 'border-white/20 bg-white/15'
+    accent: 'from-emerald-600 to-green-400',
+    iconWrap: 'from-emerald-600 to-green-500 shadow-emerald-200',
+    badge: 'border-emerald-200 bg-emerald-600 text-white shadow-emerald-100'
   },
   Comprado: {
     icon: ShoppingBag,
-    card: 'border-blue-300/40 bg-gradient-to-br from-[#1E3A8A] via-[#1D4ED8] to-[#4338CA] hover:border-white/50 hover:shadow-blue-500/50',
-    iconWrap: 'border-white/30 bg-white/20 text-white shadow-blue-950/30',
-    panel: 'border-white/20 bg-white/15'
+    accent: 'from-blue-900 to-indigo-600',
+    iconWrap: 'from-blue-900 to-indigo-600 shadow-indigo-200',
+    badge: 'border-indigo-200 bg-indigo-700 text-white shadow-indigo-100'
   },
   Entregue: {
     icon: PackageCheck,
-    card: 'border-teal-300/40 bg-gradient-to-br from-[#0F766E] via-[#059669] to-[#16A34A] hover:border-white/50 hover:shadow-teal-500/50',
-    iconWrap: 'border-white/30 bg-white/20 text-white shadow-teal-950/25',
-    panel: 'border-white/20 bg-white/15'
+    accent: 'from-teal-600 to-emerald-500',
+    iconWrap: 'from-teal-600 to-emerald-500 shadow-teal-200',
+    badge: 'border-teal-200 bg-teal-600 text-white shadow-teal-100'
   },
   Rejeitado: {
     icon: Ban,
-    card: 'border-rose-300/40 bg-gradient-to-br from-[#E11D48] via-[#DC2626] to-[#F97316] hover:border-white/50 hover:shadow-rose-500/50',
-    iconWrap: 'border-white/30 bg-white/20 text-white shadow-rose-950/25',
-    panel: 'border-white/20 bg-white/15'
+    accent: 'from-rose-600 to-red-500',
+    iconWrap: 'from-rose-600 to-red-500 shadow-rose-200',
+    badge: 'border-rose-200 bg-rose-600 text-white shadow-rose-100'
   }
 } as const;
 
@@ -78,8 +78,8 @@ export const HistoryTable: React.FC<HistoryTableProps> = ({ requisitions, onItem
   };
 
   return (
-    <section className="flex min-h-[520px] flex-col overflow-hidden rounded-[2rem] border border-blue-200/80 bg-white/75 shadow-xl shadow-blue-300/30 backdrop-blur-sm" aria-labelledby="history-title">
-      <header className="flex flex-col gap-4 border-b border-blue-200/80 bg-gradient-to-r from-white via-blue-50 to-indigo-100 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+    <section className="flex min-h-[520px] flex-col overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-xl shadow-slate-200/60" aria-labelledby="history-title">
+      <header className="flex flex-col gap-4 border-b border-slate-200 bg-gradient-to-r from-white to-slate-50 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
         <div>
           <div className="flex items-center gap-2">
             <h2 id="history-title" className="text-lg font-black text-slate-900">Histórico de itens</h2>
@@ -116,41 +116,42 @@ export const HistoryTable: React.FC<HistoryTableProps> = ({ requisitions, onItem
                 type="button"
                 onClick={() => onItemClick?.(requisition)}
                 aria-label={`Abrir detalhes de ${requisition.name}`}
-                className={`group flex h-full min-h-48 w-full flex-col rounded-2xl border p-4 text-left shadow-lg transition hover:-translate-y-1 hover:shadow-2xl focus:outline-none focus:ring-4 focus:ring-white/70 ${visual.card}`}
+                className="group relative flex h-full min-h-48 w-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-white to-slate-50 p-4 pl-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-xl hover:shadow-slate-200/80 focus:outline-none focus:ring-4 focus:ring-blue-100"
               >
+                <span className={`absolute inset-y-0 left-0 w-1.5 bg-gradient-to-b ${visual.accent}`} aria-hidden="true" />
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex min-w-0 items-start gap-3">
-                    <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border shadow-lg backdrop-blur-sm ${visual.iconWrap}`} aria-hidden="true">
+                    <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-lg ${visual.iconWrap}`} aria-hidden="true">
                       <StatusIcon className="h-4 w-4" />
                     </span>
                     <div className="min-w-0">
-                      <h3 className="break-words text-sm font-black leading-5 text-white">{requisition.name}</h3>
-                      <p className="mt-1 truncate font-mono text-[9px] font-bold uppercase tracking-wide text-white/65">{requisition.id}</p>
+                      <h3 className="break-words text-sm font-black leading-5 text-slate-900 transition group-hover:text-blue-800">{requisition.name}</h3>
+                      <p className="mt-1 truncate font-mono text-[9px] font-bold uppercase tracking-wide text-slate-400">{requisition.id}</p>
                     </div>
                   </div>
-                  <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-white/25 bg-white/15 px-3 py-1 text-xs font-bold text-white shadow-sm backdrop-blur-sm">
-                    <span className="h-1.5 w-1.5 rounded-full bg-white shadow-[0_0_8px_rgba(255,255,255,0.95)]" />
+                  <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold shadow-sm ${visual.badge}`}>
+                    <span className="h-1.5 w-1.5 rounded-full bg-white" />
                     {requisition.status}
                   </span>
                 </div>
 
                 <div className="mt-4 grid grid-cols-2 gap-2">
-                  <div className={`rounded-xl border p-3 shadow-sm ${visual.panel}`}>
-                    <div className="flex items-center gap-1.5 text-white/70"><PackageSearch className="h-3.5 w-3.5" /><span className="text-[9px] font-black uppercase tracking-wide">Quantidade</span></div>
-                    <p className="mt-1 text-sm font-black text-white">{requisition.quantity} <span className="text-xs text-white/75">{requisition.unit}</span></p>
+                  <div className="rounded-xl border border-slate-100 bg-slate-50/90 p-3">
+                    <div className="flex items-center gap-1.5 text-slate-400"><PackageSearch className="h-3.5 w-3.5" /><span className="text-[9px] font-black uppercase tracking-wide">Quantidade</span></div>
+                    <p className="mt-1 text-sm font-black text-slate-800">{requisition.quantity} <span className="text-xs text-slate-500">{requisition.unit}</span></p>
                   </div>
-                  <div className={`min-w-0 rounded-xl border p-3 shadow-sm ${visual.panel}`}>
-                    <div className="flex items-center gap-1.5 text-white/70"><UserRound className="h-3.5 w-3.5" /><span className="text-[9px] font-black uppercase tracking-wide">Solicitante</span></div>
-                    <p className="mt-1 truncate text-sm font-black text-white">{requisition.requester}</p>
+                  <div className="min-w-0 rounded-xl border border-slate-100 bg-slate-50/90 p-3">
+                    <div className="flex items-center gap-1.5 text-slate-400"><UserRound className="h-3.5 w-3.5" /><span className="text-[9px] font-black uppercase tracking-wide">Solicitante</span></div>
+                    <p className="mt-1 truncate text-sm font-black text-slate-800">{requisition.requester}</p>
                   </div>
                 </div>
 
                 <div className="mt-auto flex items-end justify-between gap-3 pt-4">
                   <div className="min-w-0">
-                    <p className="truncate text-[10px] font-black uppercase tracking-wide text-white/90">{requisition.department}</p>
-                    <p className="mt-1 flex items-center gap-1.5 text-[10px] font-bold text-white/70"><CalendarDays className="h-3.5 w-3.5" />{formatDate(requisition.requestDate)}</p>
+                    <p className="truncate text-[10px] font-black uppercase tracking-wide text-slate-600">{requisition.department}</p>
+                    <p className="mt-1 flex items-center gap-1.5 text-[10px] font-bold text-slate-400"><CalendarDays className="h-3.5 w-3.5" />{formatDate(requisition.requestDate)}</p>
                   </div>
-                  <span className="flex shrink-0 items-center gap-1.5 rounded-lg bg-black/10 px-2 py-1 text-[10px] font-black text-white"><Eye className="h-4 w-4" />Ver detalhes</span>
+                  <span className="flex shrink-0 items-center gap-1.5 rounded-lg bg-blue-50 px-2 py-1 text-[10px] font-black text-blue-700 transition group-hover:bg-blue-100"><Eye className="h-4 w-4" />Ver detalhes</span>
                 </div>
               </button>
             </article>
