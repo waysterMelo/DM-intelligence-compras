@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@google/gemini-cli": "^0.32.1",
     "@nestjs/passport": "^11.0.5",
     "@nestjs/throttler": "^6.5.0",
     "bcrypt": "^6.0.0",

@@ -1,2 +1,20 @@
-ESTA TENDO UM ERRO 
-QUANDO EU CLICO EM Componentes Tributários (%) PARA PREENCHER OS DADOS DE Destinação da Mercadoria , VOLTA PARA MATERIAL DE USO E CONSUMO
+Analise o meu projeto completo e responda:
+
+Como o sistema atualmente identifica quando deve gerar aproveitamento de impostos? Explique a lógica existente, onde ela está implementada e quais condições disparam esse cálculo.
+O que precisa ser acrescentado para tornar esse processo automático? Considere:
+
+Inclusão de uma porcentagem de aproveitamento configurável por imposto (ex: PIS, COFINS, ICMS, IPI etc.)
+Se é necessário criar um arquivo de configuração (ex: .json, .yaml, .env ou tabela no banco) para armazenar essas porcentagens
+Como o sistema deve aplicar automaticamente essa porcentagem no momento do cálculo
+
+
+Proponha uma solução técnica indicando:
+
+Estrutura do arquivo ou tabela de configuração sugerida
+Onde e como o cálculo automático deve ser chamado no fluxo atual
+Se há necessidade de interface para o usuário editar essas configurações
+
+
+
+
+Baseie toda a análise exclusivamente no código e estrutura do projeto fornecido.
