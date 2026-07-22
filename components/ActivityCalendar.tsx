@@ -32,24 +32,24 @@ export const ActivityCalendar: React.FC<ActivityCalendarProps> = ({ requisitions
   const activeDays = days.filter(day => activityMap[getDayKey(day)]?.length).length;
 
   return (
-    <section className="flex h-fit flex-col rounded-[2rem] border border-slate-100 bg-white p-4 shadow-soft sm:p-5" aria-labelledby="calendar-title">
+    <section className="flex h-fit flex-col rounded-[2rem] border border-blue-400/30 bg-gradient-to-br from-[#1877F2] via-[#166FE5] to-[#0F5FC7] p-4 text-white shadow-xl shadow-blue-200/70 sm:p-5" aria-labelledby="calendar-title">
       <header className="mb-4 flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-blue-600"><CalendarDays className="h-5 w-5" /></div>
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-white/20 bg-white/15 text-white shadow-inner"><CalendarDays className="h-5 w-5" /></div>
           <div className="min-w-0">
-            <h2 id="calendar-title" className="text-base font-black text-slate-900">Calendário</h2>
-            <p className="truncate text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">{monthNames[month]} {year}</p>
+            <h2 id="calendar-title" className="text-base font-black text-white">Calendário</h2>
+            <p className="truncate text-[10px] font-black uppercase tracking-[0.14em] text-blue-100">{monthNames[month]} {year}</p>
           </div>
         </div>
         <div className="flex gap-1">
-          <button type="button" aria-label="Mês anterior" onClick={() => setCurrentDate(new Date(year, month - 1, 1))} className="rounded-xl border border-slate-200 p-2 text-slate-500 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600"><ChevronLeft className="h-4 w-4" /></button>
-          <button type="button" aria-label="Próximo mês" onClick={() => setCurrentDate(new Date(year, month + 1, 1))} className="rounded-xl border border-slate-200 p-2 text-slate-500 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600"><ChevronRight className="h-4 w-4" /></button>
+          <button type="button" aria-label="Mês anterior" onClick={() => setCurrentDate(new Date(year, month - 1, 1))} className="rounded-xl border border-white/20 bg-white/10 p-2 text-white transition hover:border-white/40 hover:bg-white/20 focus:ring-4 focus:ring-white/20"><ChevronLeft className="h-4 w-4" /></button>
+          <button type="button" aria-label="Próximo mês" onClick={() => setCurrentDate(new Date(year, month + 1, 1))} className="rounded-xl border border-white/20 bg-white/10 p-2 text-white transition hover:border-white/40 hover:bg-white/20 focus:ring-4 focus:ring-white/20"><ChevronRight className="h-4 w-4" /></button>
         </div>
       </header>
 
       <div className="grid grid-cols-7 gap-1" aria-hidden="true">
         {weekDays.map(([short, full]) => (
-          <div key={full} className="py-2 text-center text-[9px] font-black uppercase text-slate-400">
+          <div key={full} className="py-2 text-center text-[9px] font-black uppercase text-blue-100/90">
             <span className="sm:hidden">{short}</span><span className="hidden sm:inline">{full}</span>
           </div>
         ))}
@@ -69,23 +69,23 @@ export const ActivityCalendar: React.FC<ActivityCalendarProps> = ({ requisitions
               disabled={!hasActivity}
               onClick={() => onDayClick?.(key, dayItems)}
               aria-label={`${day} de ${monthNames[month]}${hasActivity ? `, ${dayItems.length} ${dayItems.length === 1 ? 'movimentação' : 'movimentações'}` : ', sem movimentações'}`}
-              className={`relative flex min-h-10 items-center justify-center rounded-xl text-xs font-black transition sm:min-h-11 ${current ? 'bg-blue-600 text-white shadow-md shadow-blue-100' : hasActivity ? 'bg-blue-50 text-blue-700 hover:bg-blue-100 focus:ring-4 focus:ring-blue-100' : 'text-slate-500 disabled:opacity-100'} `}
+              className={`relative flex min-h-10 items-center justify-center rounded-xl border text-xs font-black transition sm:min-h-11 ${current ? 'border-white bg-white text-[#1877F2] shadow-lg shadow-blue-950/20' : hasActivity ? 'border-white/40 bg-white/90 text-[#1264cf] shadow-sm hover:-translate-y-0.5 hover:bg-white focus:ring-4 focus:ring-white/30' : 'border-transparent text-blue-50/90 disabled:opacity-100'}`}
             >
               {day}
               {hasActivity && (
-                <span className={`absolute right-1 top-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-0.5 text-[8px] ${current ? 'bg-white text-blue-700' : 'bg-blue-600 text-white'}`}>{dayItems.length}</span>
+                <span className={`absolute right-1 top-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-0.5 text-[8px] ${current ? 'bg-[#0F5FC7] text-white' : 'bg-[#1877F2] text-white'}`}>{dayItems.length}</span>
               )}
             </button>
           );
         })}
       </div>
 
-      <footer className="mt-4 flex items-center justify-between gap-3 border-t border-slate-100 pt-4">
+      <footer className="mt-4 flex items-center justify-between gap-3 border-t border-white/20 pt-4">
         <div>
-          <p className="text-xs font-black text-slate-700">{monthActivity} {monthActivity === 1 ? 'movimentação' : 'movimentações'}</p>
-          <p className="text-[10px] font-bold text-slate-400">em {activeDays} {activeDays === 1 ? 'dia' : 'dias'} do mês</p>
+          <p className="text-xs font-black text-white">{monthActivity} {monthActivity === 1 ? 'movimentação' : 'movimentações'}</p>
+          <p className="text-[10px] font-bold text-blue-100">em {activeDays} {activeDays === 1 ? 'dia' : 'dias'} do mês</p>
         </div>
-        <span className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wide text-blue-600"><span className="h-2 w-2 rounded-full bg-blue-500" />Com atividade</span>
+        <span className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wide text-white"><span className="h-2 w-2 rounded-full bg-white shadow-sm" />Com atividade</span>
       </footer>
     </section>
   );

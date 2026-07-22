@@ -130,7 +130,7 @@ function App() {
               onDelete={deleteRequisition}
             />
           ) : (
-            <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="grid items-start gap-5 rounded-[2.5rem] border border-blue-100/80 bg-gradient-to-br from-[#eaf1ff] via-[#f5f8ff] to-[#e5edff] p-3 shadow-inner shadow-blue-100/60 sm:p-4 xl:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_360px]">
               <div className="min-w-0">
                 <HistoryTable 
                   requisitions={displayData} 
