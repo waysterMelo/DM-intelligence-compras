@@ -72,39 +72,37 @@ export const TaxSettingsModal: React.FC<TaxSettingsModalProps> = ({ isOpen, onCl
 
   if (!isOpen) return null;
   return (
-    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-      <div className="bg-white w-full max-w-4xl rounded-[2.5rem] shadow-2xl p-8 max-h-[92vh] overflow-y-auto">
-        <div className="flex justify-between items-start mb-6">
+    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
+      <div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-[2rem] bg-white shadow-2xl">
+        <div className="flex items-start justify-between bg-[#111827] p-6 text-white">
           <div>
-            <h3 className="text-2xl font-black text-slate-800">Premissas de TCO</h3>
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Percentual estimado de recuperação por destinação</p>
+            <p className="text-[9px] font-black uppercase tracking-[0.2em] text-blue-400">Simulador de custos</p>
+            <h3 className="mt-1 text-2xl font-black">Premissas de TCO</h3>
+            <p className="mt-1 text-xs font-medium text-slate-400">Percentual estimado de recuperação por destinação.</p>
           </div>
-          <button onClick={onClose} className="p-2 text-slate-300 hover:text-rose-500" aria-label="Fechar"><X className="w-6 h-6" /></button>
+          <button onClick={onClose} className="rounded-xl bg-white/10 p-2 text-slate-300 hover:bg-white/15 hover:text-white" aria-label="Fechar"><X className="h-5 w-5" /></button>
         </div>
 
-        <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100 mb-6 flex gap-3">
-          <Info className="w-5 h-5 text-blue-500 shrink-0" />
-          <p className="text-xs font-semibold text-blue-800 leading-relaxed">
-            Estas são premissas comerciais para comparar fornecedores. O sistema aplica o percentual ao valor do tributo informado na cotação ou na nota.
-          </p>
-        </div>
-
-        <form onSubmit={save}>
+        <form onSubmit={save} className="p-6">
+          <div className="mb-5 flex gap-3 rounded-2xl border border-blue-100 bg-blue-50 p-4">
+            <Info className="h-5 w-5 shrink-0 text-blue-600" />
+            <p className="text-xs font-semibold leading-relaxed text-blue-900">Estas são premissas comerciais para comparar fornecedores. O percentual é aplicado ao valor informado na cotação ou na nota.</p>
+          </div>
           <div className="overflow-x-auto rounded-2xl border border-slate-200">
             <table className="w-full text-left">
-              <thead className="bg-slate-50 text-[10px] uppercase tracking-widest text-slate-500">
+              <thead className="bg-slate-950 text-[9px] uppercase tracking-widest text-slate-300">
                 <tr><th className="p-4">Destinação</th>{taxes.map(tax => <th key={tax.key} className="p-4">{tax.label}</th>)}</tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {uses.map(use => {
                   const row = matrix.find(item => item.itemUseType === use.key) || emptyMatrix().find(item => item.itemUseType === use.key)!;
                   return (
-                    <tr key={use.key}>
+                    <tr key={use.key} className="transition hover:bg-slate-50">
                       <td className="p-4 text-sm font-bold text-slate-700">{use.label}</td>
                       {taxes.map(tax => (
                         <td key={tax.key} className="p-3">
                           <div className="relative min-w-24">
-                            <input type="number" min="0" max="100" step="0.01" value={row[tax.key]} onChange={event => change(use.key, tax.key, event.target.value)} className="w-full rounded-xl bg-slate-50 px-3 py-2 pr-8 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500" />
+                            <input aria-label={`${use.label} ${tax.label}`} type="number" min="0" max="100" step="0.01" value={row[tax.key]} onChange={event => change(use.key, tax.key, event.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 pr-8 text-sm font-bold outline-none focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-100" />
                             <Percent className="absolute right-2 top-2.5 h-4 w-4 text-slate-300" />
                           </div>
                         </td>
@@ -116,9 +114,9 @@ export const TaxSettingsModal: React.FC<TaxSettingsModalProps> = ({ isOpen, onCl
             </table>
           </div>
           {error && <p className="mt-4 text-sm font-bold text-rose-600">{error}</p>}
-          <div className="pt-6 flex justify-end gap-3">
-            <button type="button" onClick={onClose} className="px-6 py-3 bg-slate-100 text-slate-600 font-bold text-xs rounded-2xl">Cancelar</button>
-            <button disabled={loading} type="submit" className="px-7 py-3 bg-blue-600 text-white font-bold text-xs rounded-2xl flex items-center gap-2 disabled:opacity-60"><Save className="w-4 h-4" />{loading ? 'Salvando...' : 'Salvar premissas'}</button>
+          <div className="flex justify-end gap-3 pt-6">
+            <button type="button" onClick={onClose} className="rounded-xl bg-slate-100 px-6 py-3 text-xs font-black text-slate-600">Cancelar</button>
+            <button disabled={loading} type="submit" className="flex items-center gap-2 rounded-xl bg-blue-600 px-7 py-3 text-xs font-black text-white shadow-lg shadow-blue-200 disabled:opacity-60"><Save className="h-4 w-4" />{loading ? 'Salvando...' : 'Salvar premissas'}</button>
           </div>
         </form>
       </div>

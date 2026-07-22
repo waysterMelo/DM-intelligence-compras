@@ -1,43 +1,94 @@
-# Design QA — Histórico com cards neutros
+# Design QA — Dashboard de Saving
 
 ## Evidências
 
-- Fonte visual: `artifacts/history-neutral-cards/01-before.png`
-- Implementação final: `artifacts/history-neutral-cards/06-final-desktop.png`
-- Estado: Histórico Geral, filtro “Todos os status”, comprador autenticado.
-- Viewport e pixels: fonte e implementação em 1274 × 717 px, densidade equivalente e sem normalização adicional.
-- Comparação completa: as duas imagens foram abertas juntas para avaliar hierarquia, legibilidade, contraste, espaçamento e proporções.
-- Região focal: cards, faixa lateral, badge, painéis internos e calendário estão legíveis na captura completa; não foi necessário recorte adicional.
-- Responsividade: em viewport CSS de 390 px, o card mediu 300 px, `bodyScrollWidth` 384 px e não houve overflow horizontal.
+- Fonte visual: `C:\Users\Carlos\AppData\Local\Temp\codex-clipboard-f1727a20-6773-40ee-8527-a2bd0a34213d.png`
+- Implementação: `C:\Users\Carlos\Desktop\projetos\Ra-polymers-compras\dashboard-saving-implementation.png`
+- Comparação combinada: `C:\Users\Carlos\Desktop\projetos\Ra-polymers-compras\dashboard-saving-comparison.png`
+- Fonte: 1336 × 464 px.
+- Implementação: 1280 × 720 px, viewport CSS 1280 × 720, DPR 1.
+- Estado: usuário comprador autenticado, Dashboard de Saving aberto, dados da API de simulação carregados.
 
-## Superfícies verificadas
+## Comparação visual
 
-- Tipografia: família, pesos, tamanhos e hierarquia foram preservados; textos escuros melhoraram a leitura sobre os cards claros.
-- Espaçamento e layout: grid, paddings, raios, alinhamentos e densidade foram preservados após correção do eixo flex do card.
-- Cores e tokens: o fundo geral passou para cinza-azulado neutro; cards usam branco e cinza muito claro; cores fortes ficaram restritas à faixa lateral, ícone, badge e ação.
-- Imagens e ícones: não há imagens raster na superfície; os ícones existentes foram mantidos e receberam cor semântica por status.
-- Conteúdo: nomes, quantidades, solicitantes, datas, status e ações permanecem intactos.
+A comparação combinada confirma a estrutura compacta da nova referência: painel escuro, quatro KPIs na primeira linha, quatro indicadores operacionais na segunda, cores semânticas saturadas, ícone de apoio em baixa opacidade, selo no topo, divisor e rodapé informativo. A implementação amplia o contexto com navegação, filtro de período e gráficos logo abaixo.
 
-## Histórico de comparação
+Não foi necessário um recorte adicional: os textos, ícones, espaçamentos e divisores dos quatro cards permanecem legíveis na comparação combinada.
 
-1. A fonte anterior usava azul forte em toda a superfície dos cards, classificado como P1 por excesso de peso visual e repetição.
-2. A primeira implementação neutra perdeu `flex-col`, causando sobreposição horizontal, classificada como P1. O eixo do card foi corrigido e a composição voltou ao fluxo vertical.
-3. A comparação final não encontrou P0, P1 ou P2 pendentes.
+## Superfícies de fidelidade
+
+- Tipografia: Plus Jakarta Sans preservada; pesos altos, números grandes e microtextos em caixa alta reproduzem a hierarquia da referência.
+- Espaçamento e layout: grid 4 × 2 compacto em desktop, com cards principais de 178 px e indicadores de 132 px de altura. Em 390 × 844 CSS px, os cards passam para uma coluna; `scrollWidth` e `clientWidth` permaneceram iguais em 384 px, sem overflow horizontal.
+- Cores e tokens: verde `#009E68`, azul `#285BD4`, violeta `#7134D1`, laranja `#C65B02` e painel `#111827`, com contraste branco adequado.
+- Imagens e ícones: não há imagens raster na referência; foram usados equivalentes da biblioteca Lucide já adotada pelo produto, inclusive nos elementos decorativos.
+- Conteúdo: rótulos, valores, saving, gasto, ticket, fornecedor, share e dados operacionais são derivados do sistema; nenhuma métrica foi substituída por texto decorativo.
+
+## Interações verificadas
+
+- Autenticação com a API de simulação.
+- Navegação para Dashboard de Saving.
+- Aplicação e limpeza do filtro de data inicial.
+- Renderização de dados, indicadores e gráfico.
+- Console: nenhum erro JavaScript.
+
+## Histórico de correções
+
+1. A primeira versão usava uma grade 2 × 2 e ocupava altura excessiva no Dashboard.
+2. Os cards foram compactados e reorganizados em uma grade 4 × 2, seguindo a segunda referência fornecida.
+3. A captura pós-correção confirmou oito cards alinhados, gráficos visíveis logo abaixo e ausência de overflow horizontal no teste responsivo.
 
 ## Findings
 
-- Nenhuma divergência bloqueante ou moderada na implementação final.
+- Nenhuma diferença P0, P1 ou P2 permanece.
+- P3 aceitável: os símbolos decorativos são equivalentes da biblioteca existente, não os desenhos exatos da imagem de referência.
 
 ## Implementation Checklist
 
-- Fundo geral neutro: concluído.
-- Cards claros com faixa semântica: concluído.
-- Ícone e badge com cor forte por status: concluído.
-- Calendário mantido como destaque azul: concluído.
-- Responsividade sem overflow horizontal: concluído.
+- [x] Quatro KPIs principais com hierarquia visual da referência.
+- [x] Dados reais mantidos nos cálculos.
+- [x] Filtros e exportação preservados.
+- [x] Indicadores de NF e gráficos integrados.
+- [x] Layout responsivo sem overflow horizontal.
+- [x] Build de produção aprovado.
 
-## Follow-up Polish
+final result: passed
 
-- P3 opcional: observar a distribuição de cores com mais requisições em estados diferentes antes de ajustar saturação individual.
+---
+
+# Design QA — Fornecedores & TCO
+
+## Evidências
+
+- Fonte visual: `C:\Users\Carlos\AppData\Local\Temp\codex-clipboard-f1727a20-6773-40ee-8527-a2bd0a34213d.png`
+- Implementação: `C:\Users\Carlos\Desktop\projetos\Ra-polymers-compras\fornecedores-tco-implementation.png`
+- Comparação combinada: `C:\Users\Carlos\Desktop\projetos\Ra-polymers-compras\fornecedores-tco-comparison.png`
+- Modal: `C:\Users\Carlos\Desktop\projetos\Ra-polymers-compras\premissas-tco-implementation.png`
+- Implementação capturada em viewport CSS 1280 × 720, DPR 1.
+
+## Comparação visual
+
+A tela reutiliza diretamente a linguagem escolhida para o Dashboard: painel escuro, quatro indicadores compactos, verde/azul/violeta/laranja, ícones em baixa opacidade e valores com forte hierarquia. A lista de parceiros foi mantida clara e compacta para favorecer cadastro, pesquisa e edição.
+
+## Superfícies de fidelidade
+
+- Tipografia: Plus Jakarta Sans, pesos fortes e microtextos em caixa alta consistentes com a referência.
+- Espaçamento e layout: quatro indicadores de 132 px no desktop e uma coluna no celular; cards de parceiros compactos e alinhados.
+- Cores: mesmos tokens semânticos do Dashboard de Saving e contraste adequado.
+- Imagens e ícones: somente ícones Lucide já adotados pelo produto; nenhuma simulação por CSS ou caractere.
+- Conteúdo: contagens derivadas dos cadastros, regimes e papéis reais retornados pela API.
+
+## Interações verificadas
+
+- Navegação para Fornecedores & TCO.
+- Busca por nome com atualização para um resultado e limpeza do filtro.
+- Abertura e fechamento das Premissas de TCO.
+- Matriz completa com rótulos acessíveis para os 16 campos percentuais.
+- Responsividade em 390 × 844 CSS px sem overflow horizontal.
+- Console: nenhum erro JavaScript.
+
+## Findings
+
+- Nenhuma diferença P0, P1 ou P2 permanece.
+- A grade de parceiros usa fundo claro intencionalmente para preservar leitura e distinguir cadastro dos indicadores executivos.
 
 final result: passed

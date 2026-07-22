@@ -1,373 +1,310 @@
-
-import React, { useState, useMemo } from 'react';
-import { Requisition, StatsData } from '../types';
-import { 
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  BarChart, Bar
-} from 'recharts';
-import { 
-  TrendingUp, DollarSign, 
-  PiggyBank, Calendar, ArrowUpRight, XCircle,
-  Receipt, Store, Landmark, ShieldAlert, Percent
+import React, { useMemo, useState } from 'react';
+import {
+  ArrowUpRight,
+  Calendar,
+  CheckCircle2,
+  Clock3,
+  DollarSign,
+  Download,
+  FileClock,
+  PiggyBank,
+  Receipt,
+  Store,
+  TrendingUp,
+  XCircle,
 } from 'lucide-react';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
-import { Download } from 'lucide-react';
+import { Requisition, StatsData } from '../types';
 
 interface StatsCardsProps {
   requisitions: Requisition[];
   stats: StatsData;
 }
 
+const formatCurrency = (value: number) => new Intl.NumberFormat('pt-BR', {
+  style: 'currency',
+  currency: 'BRL',
+}).format(value);
+
 export const StatsCards: React.FC<StatsCardsProps> = ({ requisitions, stats }) => {
-  const [startDate, setStartDate] = useState<string>('');
-  const [endDate, setEndDate] = useState<string>('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
 
-  const exportPDF = async () => {
-    const dashboardElement = document.getElementById('dashboard-content');
-    if (!dashboardElement) return;
+  const filteredData = useMemo(() => requisitions.filter(item => {
+    if (startDate && item.requestDate < startDate) return false;
+    if (endDate && item.requestDate > endDate) return false;
+    return true;
+  }), [endDate, requisitions, startDate]);
 
-    try {
-      const canvas = await html2canvas(dashboardElement, { scale: 2 });
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+  const completedItems = useMemo(
+    () => filteredData.filter(item => item.status === 'Comprado' || item.status === 'Entregue'),
+    [filteredData],
+  );
 
-      pdf.text(`RA Polymers - Relatório de Desempenho (${startDate || 'Início'} a ${endDate || 'Hoje'})`, 10, 10);
-      pdf.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')}`, 10, 16);
-      pdf.addImage(imgData, 'PNG', 0, 20, pdfWidth, pdfHeight);
-      pdf.save('Relatorio-Compras.pdf');
-    } catch (error) {
-      console.error("Erro ao gerar PDF:", error);
-    }
-  };
+  const totalCost = completedItems.reduce((total, item) => (
+    total + (item.purchaseInvoice?.grossTotal ?? Math.round((item.finalCost || 0) * item.quantity * 100) / 100)
+  ), 0);
 
-  const filteredData = useMemo(() => {
-    return requisitions.filter(r => {
-      if (startDate && r.requestDate < startDate) return false;
-      if (endDate && r.requestDate > endDate) return false;
-      return true;
-    });
-  }, [requisitions, startDate, endDate]);
-
-  // CÁLCULOS FINANCEIROS CORRIGIDOS
-  const completedItems = filteredData.filter(r => r.status === 'Comprado' || r.status === 'Entregue');
-  
-  const totalCost = completedItems.reduce((acc, curr) => {
-    const cost = curr.purchaseInvoice?.grossTotal ?? Math.round((curr.finalCost || 0) * curr.quantity * 100) / 100;
-    return acc + cost;
+  const totalSaving = completedItems.reduce((total, item) => {
+    if (!item.quotes || item.quotes.length <= 1) return total;
+    const winner = item.quotes.find(quote => quote.isSelected);
+    if (!winner) return total;
+    const highestOffer = Math.max(...item.quotes.map(quote => quote.price));
+    return total + Math.max(0, Math.round((highestOffer - winner.price) * item.quantity * 100) / 100);
   }, 0);
 
-  const totalSaving = completedItems.reduce((acc, curr) => {
-    if (!curr.quotes || curr.quotes.length <= 1) return acc;
-    
-    const winningQuote = curr.quotes.find(q => q.isSelected);
-    if (!winningQuote) return acc;
+  const averageTicket = completedItems.length ? totalCost / completedItems.length : 0;
+  const savingBase = totalCost + totalSaving;
+  const savingPercentage = savingBase > 0 ? Math.round((totalSaving / savingBase) * 100) : 0;
 
-    const maxPrice = Math.max(...curr.quotes.map(q => q.price));
-    if (maxPrice > winningQuote.price) {
-      const diffUnit = maxPrice - winningQuote.price;
-      const itemSaving = Math.round(diffUnit * curr.quantity * 100) / 100;
-      return acc + itemSaving;
-    }
-    return acc;
-  }, 0);
-
-  // MÓDULO FISCAL: Novos Cálculos
-  const totalCreditIcms = completedItems.reduce((acc, curr) => {
-    const winningQuote = curr.quotes?.find(q => q.isSelected);
-    if (winningQuote && winningQuote.creditIcms) {
-      return acc + (winningQuote.creditIcms * curr.quantity);
-    }
-    return acc;
-  }, 0);
-
-  const totalCreditIpi = completedItems.reduce((acc, curr) => {
-    const winningQuote = curr.quotes?.find(q => q.isSelected);
-    if (winningQuote) {
-      const ipi = winningQuote.creditIpi || winningQuote.taxMemory?.credits?.ipi || 0;
-      return acc + (ipi * curr.quantity);
-    }
-    return acc;
-  }, 0);
-
-  const totalSimplesLoss = completedItems.reduce((acc, curr) => {
-    const winningQuote = curr.quotes?.find(q => q.isSelected);
-    // Verifica se a cotação vencedora pertence a um fornecedor SIMPLES
-    if (winningQuote && winningQuote.taxMemory?.supplierRegime === 'SIMPLES') {
-      if (winningQuote.icmsRate && winningQuote.icmsRate > 0) {
-        const potentialIcmsUnit = (winningQuote.price || 0) * (winningQuote.icmsRate / 100);
-        return acc + (potentialIcmsUnit * curr.quantity);
-      }
-    }
-    return acc;
-  }, 0);
-
-  let fiscalCreditCount = 0;
-  completedItems.forEach(curr => {
-    const winningQuote = curr.quotes?.find(q => q.isSelected);
-    if (winningQuote) {
-      const icms = winningQuote.creditIcms || 0;
-      const ipi = winningQuote.creditIpi || winningQuote.taxMemory?.credits?.ipi || 0;
-      if (icms > 0 || ipi > 0) {
-        fiscalCreditCount++;
-      }
-    }
-  });
-  const fiscalCreditPercentage = completedItems.length > 0 ? Math.round((fiscalCreditCount / completedItems.length) * 100) : 0;
-
-  // ROI da área de compras (Saving / (Gasto + Saving))
-  const totalAvoided = totalCost + totalSaving;
-  const savingPercentage = totalAvoided > 0 ? Math.round((totalSaving / totalAvoided) * 100) : 0;
-
-  // Ticket Médio
-  const averageTicket = completedItems.length > 0 ? totalCost / completedItems.length : 0;
-
-  // Top Fornecedor (Curva A)
   const topSupplier = useMemo(() => {
-    const map: Record<string, number> = {};
+    const suppliers: Record<string, number> = {};
     completedItems.forEach(item => {
-       const winningQuote = item.quotes?.find(q => q.isSelected);
-       if(winningQuote && item.finalCost) {
-         const cost = item.purchaseInvoice?.grossTotal ?? item.finalCost * item.quantity;
-         const name = winningQuote.supplierName;
-         map[name] = (map[name] || 0) + cost;
-       }
+      const winner = item.quotes?.find(quote => quote.isSelected);
+      if (!winner) return;
+      const value = item.purchaseInvoice?.grossTotal ?? (item.finalCost || winner.price) * item.quantity;
+      suppliers[winner.supplierName] = (suppliers[winner.supplierName] || 0) + value;
     });
-    
-    let maxName = '---';
-    let maxVal = 0;
-    Object.entries(map).forEach(([name, val]) => {
-      if(val > maxVal) {
-        maxVal = val;
-        maxName = name;
-      }
-    });
-    return { name: maxName, value: maxVal };
+    return Object.entries(suppliers).reduce(
+      (top, [name, value]) => value > top.value ? { name, value } : top,
+      { name: 'Sem fornecedor', value: 0 },
+    );
   }, [completedItems]);
 
-  // Dados para o Gráfico de Barras (Evolução Diária)
+  const supplierShare = totalCost > 0 ? Math.round((topSupplier.value / totalCost) * 100) : 0;
+
   const timelineData = useMemo(() => {
-    const map = filteredData.reduce((acc: any, curr) => {
-      const date = curr.requestDate;
-      if(!date) return acc; // Ignora itens sem data
-      
-      if (!acc[date]) acc[date] = { date, saving: 0, gasto: 0 };
-      
-      const winningQuote = curr.quotes?.find(q => q.isSelected);
-      
-      if (curr.finalCost && (curr.status === 'Comprado' || curr.status === 'Entregue')) {
-        const initialPrice = winningQuote ? winningQuote.price : curr.finalCost;
-        const diffUnit = Math.max(0, initialPrice - curr.finalCost);
-        const itemSaving = Math.round(diffUnit * curr.quantity * 100) / 100;
-        
-        acc[date].saving += itemSaving;
-        acc[date].gasto += curr.purchaseInvoice?.grossTotal ?? Math.round((curr.finalCost * curr.quantity) * 100) / 100;
-      }
-      return acc;
-    }, {});
+    const grouped: Record<string, { date: string; saving: number; gasto: number }> = {};
+    completedItems.forEach(item => {
+      if (!item.requestDate) return;
+      if (!grouped[item.requestDate]) grouped[item.requestDate] = { date: item.requestDate, saving: 0, gasto: 0 };
+      const winner = item.quotes?.find(quote => quote.isSelected);
+      const highestOffer = item.quotes?.length ? Math.max(...item.quotes.map(quote => quote.price)) : 0;
+      grouped[item.requestDate].saving += winner ? Math.max(0, (highestOffer - winner.price) * item.quantity) : 0;
+      grouped[item.requestDate].gasto += item.purchaseInvoice?.grossTotal ?? (item.finalCost || 0) * item.quantity;
+    });
+    return Object.values(grouped).sort((a, b) => a.date.localeCompare(b.date));
+  }, [completedItems]);
 
-    return Object.values(map).sort((a: any, b: any) => a.date.localeCompare(b.date));
-  }, [filteredData]);
+  const departmentData = useMemo(() => {
+    const grouped: Record<string, number> = {};
+    completedItems.forEach(item => {
+      const value = item.purchaseInvoice?.grossTotal ?? (item.finalCost || 0) * item.quantity;
+      grouped[item.department] = (grouped[item.department] || 0) + value;
+    });
+    return Object.entries(grouped)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+  }, [completedItems]);
 
-  const deptData = filteredData.reduce((acc: any, curr) => {
-    const existing = acc.find((d: any) => d.name === curr.department);
-    const cost = curr.purchaseInvoice?.grossTotal ?? Math.round(((curr.finalCost || 0) * curr.quantity) * 100) / 100;
-    
-    if (existing) {
-      existing.realizado += cost;
-    } else {
-      acc.push({ name: curr.department, realizado: cost });
-    }
-    return acc;
-  }, []).sort((a: any, b: any) => b.realizado - a.realizado);
+  const exportPDF = async () => {
+    const dashboard = document.getElementById('dashboard-content');
+    if (!dashboard) return;
+    const canvas = await html2canvas(dashboard, { scale: 2, backgroundColor: '#f8fafc' });
+    const image = canvas.toDataURL('image/png');
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const width = pdf.internal.pageSize.getWidth();
+    const height = (canvas.height * width) / canvas.width;
+    pdf.text(`DM Intelligence — Dashboard de Saving`, 10, 10);
+    pdf.text(`Período: ${startDate || 'início'} a ${endDate || 'hoje'}`, 10, 16);
+    pdf.addImage(image, 'PNG', 0, 22, width, height);
+    pdf.save('dashboard-saving.pdf');
+  };
 
-  const formatCurrency = (val: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
+  const operationalIndicators = [
+    { label: 'Aguardando NF', value: String(stats.awaitingInvoiceCount || 0), icon: FileClock, background: 'bg-[#E6530D]', badge: '≤ 2 dias', detail: 'Pendente de emissão' },
+    { label: 'Divergências', value: String(stats.invoiceDivergenceCount || 0), icon: CheckCircle2, background: 'bg-[#138F82]', badge: 'Auditado', detail: 'Nenhuma divergência' },
+    { label: 'Variação cotação × NF', value: formatCurrency(stats.invoiceVarianceTotal || 0), icon: ArrowUpRight, background: 'bg-[#0788BE]', badge: 'No limite', detail: 'Valor realizado' },
+    { label: 'Prazo médio de entrega', value: `${Math.round(stats.averageLeadTime || 0)} dias`, icon: Clock3, background: 'bg-[#4A3AC2]', badge: 'Meta 5 dias', detail: 'Prazo realizado' },
+  ];
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500 pb-12">
-      
-      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 bg-white p-4 rounded-3xl shadow-soft border border-slate-50">
-        <div className="flex items-center gap-3 pl-2">
-           <Calendar className="w-5 h-5 text-blue-600" />
-           <h3 className="text-sm font-extrabold text-slate-800 uppercase tracking-widest">Relatório de Desempenho</h3>
-        </div>
-        
-        <div className="flex flex-wrap items-center gap-2 bg-slate-50 p-2 rounded-2xl border border-slate-100">
-           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-2 hidden md:inline-block">Filtrar Período:</span>
-           
-           <div className="flex items-center gap-2 bg-white px-2 py-1 rounded-xl border border-slate-200 focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-50 transition-all">
-             <span className="text-[10px] font-bold text-slate-400 uppercase">De</span>
-             <input 
-               type="date" 
-               className="text-xs font-bold text-slate-600 outline-none bg-transparent"
-               value={startDate}
-               onChange={(e) => setStartDate(e.target.value)}
-             />
-           </div>
-
-           <span className="text-slate-300 font-bold text-xs">-</span>
-
-           <div className="flex items-center gap-2 bg-white px-2 py-1 rounded-xl border border-slate-200 focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-50 transition-all">
-             <span className="text-[10px] font-bold text-slate-400 uppercase">Até</span>
-             <input 
-               type="date" 
-               className="text-xs font-bold text-slate-600 outline-none bg-transparent"
-               value={endDate}
-               onChange={(e) => setEndDate(e.target.value)}
-             />
-           </div>
-
-           {(startDate || endDate) && (
-             <button 
-               onClick={() => { setStartDate(''); setEndDate(''); }}
-               className="ml-1 p-2 text-rose-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors"
-               title="Limpar Datas"
-             >
-               <XCircle className="w-4 h-4" />
-             </button>
-           )}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {/* CARD 1: SAVING (KPI Principal) */}
-        <div className="bg-gradient-to-br from-emerald-500 to-teal-600 p-6 rounded-[2.5rem] shadow-lg shadow-emerald-200 text-white relative overflow-hidden group">
-          <div className="absolute top-0 right-0 p-4 opacity-20 transform translate-x-4 -translate-y-4 group-hover:translate-x-0 group-hover:translate-y-0 transition-transform duration-700">
-             <PiggyBank className="w-32 h-32" />
+    <div id="dashboard-content" className="space-y-6 pb-12 animate-in fade-in duration-500">
+      <section className="flex flex-col gap-4 rounded-[2rem] border border-slate-200 bg-white p-4 shadow-soft sm:p-5 xl:flex-row xl:items-center xl:justify-between">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-950 text-white">
+            <Calendar className="h-5 w-5" />
           </div>
-          <div className="relative z-10">
-            <div className="flex justify-between items-start mb-6">
-               <div className="p-3 bg-white/20 backdrop-blur-md rounded-2xl">
-                 <TrendingUp className="w-6 h-6" />
-               </div>
-               <div className="bg-white/20 backdrop-blur-md px-3 py-1 rounded-full text-[10px] font-bold uppercase">
-                 Negociação: {savingPercentage}%
-               </div>
-            </div>
-            <p className="text-emerald-50 text-sm font-bold uppercase tracking-wider">Saving Gerado</p>
-            <p className="text-3xl font-black mt-1">{formatCurrency(totalSaving)}</p>
-            <div className="mt-4 flex items-center gap-1 text-emerald-100 text-xs font-medium">
-               <ArrowUpRight className="w-4 h-4" /> Oferta Inicial vs Fechamento
-            </div>
+          <div>
+            <h2 className="text-sm font-black uppercase tracking-[0.16em] text-slate-900">Desempenho de compras</h2>
+            <p className="mt-1 text-xs font-medium text-slate-500">Saving, gasto realizado e eficiência no período.</p>
           </div>
         </div>
 
-        {/* CARD 2: GASTO TOTAL */}
-        <div className="bg-white p-6 rounded-[2.5rem] shadow-soft border border-slate-50">
-          <div className="flex justify-between items-start mb-6">
-             <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl">
-               <DollarSign className="w-6 h-6" />
-             </div>
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+          <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+            <span className="text-[9px] font-black uppercase tracking-wider text-slate-400">De</span>
+            <input aria-label="Data inicial" type="date" value={startDate} onChange={event => setStartDate(event.target.value)} className="min-w-0 bg-transparent text-xs font-bold text-slate-700 outline-none" />
+          </label>
+          <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+            <span className="text-[9px] font-black uppercase tracking-wider text-slate-400">Até</span>
+            <input aria-label="Data final" type="date" value={endDate} onChange={event => setEndDate(event.target.value)} className="min-w-0 bg-transparent text-xs font-bold text-slate-700 outline-none" />
+          </label>
+          {(startDate || endDate) && (
+            <button type="button" onClick={() => { setStartDate(''); setEndDate(''); }} className="flex h-10 items-center justify-center rounded-xl px-3 text-xs font-bold text-slate-500 hover:bg-slate-100" title="Limpar período">
+              <XCircle className="mr-1.5 h-4 w-4" /> Limpar
+            </button>
+          )}
+          <button type="button" onClick={exportPDF} className="flex h-10 items-center justify-center rounded-xl bg-slate-950 px-4 text-xs font-black text-white transition hover:bg-slate-800">
+            <Download className="mr-2 h-4 w-4" /> Exportar
+          </button>
+        </div>
+      </section>
+
+      <section className="rounded-[2.25rem] bg-[#111827] p-3 shadow-2xl shadow-slate-300/70 sm:p-4">
+        <div className="mb-5 flex flex-col gap-1 px-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-blue-400">Visão executiva</p>
+            <h2 className="mt-1 text-xl font-black text-white">Dashboard de Saving</h2>
           </div>
-          <p className="text-sm font-bold text-slate-400 uppercase tracking-wide">Gasto Realizado</p>
-          <p className="text-3xl font-extrabold text-slate-900 mt-1">{formatCurrency(totalCost)}</p>
-          <p className="text-xs text-slate-400 mt-2 font-medium">Volume total comprado no período</p>
+          <p className="text-xs font-semibold text-slate-400">{completedItems.length} pedidos concluídos no período</p>
         </div>
 
-        {/* CARD 3: TICKET MÉDIO (Novo) */}
-        <div className="bg-white p-6 rounded-[2.5rem] shadow-soft border border-slate-50">
-           <div className="flex justify-between items-start mb-6">
-             <div className="p-3 bg-violet-50 text-violet-600 rounded-2xl">
-               <Receipt className="w-6 h-6" />
-             </div>
-          </div>
-          <p className="text-sm font-bold text-slate-400 uppercase tracking-wide">Ticket Médio</p>
-          <p className="text-3xl font-extrabold text-slate-900 mt-1">{formatCurrency(averageTicket)}</p>
-          <p className="text-xs text-violet-600 mt-2 font-bold uppercase tracking-tighter">Valor médio por pedido</p>
-        </div>
-
-        {/* CARD 4: TOP FORNECEDOR (Novo) */}
-        <div className="bg-white p-6 rounded-[2.5rem] shadow-soft border border-slate-50">
-          <div className="flex justify-between items-start mb-6">
-             <div className="p-3 bg-amber-50 text-amber-600 rounded-2xl">
-               <Store className="w-6 h-6" />
-             </div>
-          </div>
-          <p className="text-sm font-bold text-slate-400 uppercase tracking-wide">Top Fornecedor</p>
-          <p className="text-xl font-extrabold text-slate-900 mt-2 truncate" title={topSupplier.name}>
-             {topSupplier.name}
-          </p>
-          <p className="text-xs text-amber-600 mt-2 font-bold uppercase tracking-tighter">
-            {topSupplier.value > 0 ? `${formatCurrency(topSupplier.value)} em volume` : 'Sem dados no período'}
-          </p>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {[
-          { label: 'Aguardando NF', value: String(stats.awaitingInvoiceCount || 0) },
-          { label: 'Divergências', value: String(stats.invoiceDivergenceCount || 0) },
-          { label: 'Variação cotação × NF', value: formatCurrency(stats.invoiceVarianceTotal || 0) },
-          { label: 'Prazo médio', value: `${Math.round(stats.averageLeadTime || 0)} dias` },
-        ].map(indicator => (
-          <div key={indicator.label} className="bg-white border border-slate-100 rounded-2xl p-4">
-            <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">{indicator.label}</p>
-            <p className="text-xl font-black text-slate-800 mt-1">{indicator.value}</p>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-           <div className="lg:col-span-2 bg-white p-8 rounded-[2.5rem] shadow-soft border border-slate-50">
-              <div className="flex justify-between items-center mb-8">
-                <div>
-                  <h3 className="text-xl font-bold text-slate-800">Tendência de Negociação</h3>
-                  <p className="text-xs text-slate-400 font-bold uppercase tracking-wider mt-1">Saving acumulado por data de solicitação</p>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <article className="group relative min-h-[178px] overflow-hidden rounded-[1.6rem] border border-white/10 bg-[#009E68] p-4 text-white shadow-xl shadow-emerald-950/30 sm:p-5">
+            <PiggyBank className="absolute -right-2 top-7 h-24 w-24 text-white opacity-[0.14] transition-transform duration-500 group-hover:-translate-x-2" strokeWidth={1.5} />
+            <div className="relative z-10 flex h-full flex-col">
+              <div className="flex items-start justify-between gap-3">
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/20 bg-white/15"><TrendingUp className="h-4 w-4" /></span>
+                <span className="rounded-full border border-white/15 bg-white/15 px-2.5 py-1 text-[8px] font-black uppercase tracking-wide">Negociação: {savingPercentage}%</span>
+              </div>
+              <div className="mt-auto">
+                <p className="text-[10px] font-black uppercase tracking-[0.12em] text-emerald-100">Saving gerado</p>
+                <p className="mt-1 text-2xl font-black tracking-tight">{formatCurrency(totalSaving)}</p>
+                <div className="mt-2.5 flex items-center justify-between gap-1.5 border-t border-white/20 pt-2.5 text-[7px] font-extrabold text-emerald-50">
+                  <span className="flex min-w-0 items-center gap-1"><ArrowUpRight className="h-3 w-3 shrink-0" /> <span>Oferta inicial vs. fechamento</span></span>
+                  <span className="shrink-0">Meta: R$ 500</span>
                 </div>
               </div>
-              <div className="h-80 w-full min-h-[320px] relative" style={{ height: 320, width: '100%' }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={timelineData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis 
-                      dataKey="date" 
-                      axisLine={false} 
-                      tickLine={false} 
-                      tick={{fontSize: 10, fill: '#94a3b8'}} 
-                      tickFormatter={(str) => {
-                          if (!str) return '-';
-                          const d = new Date(str + 'T00:00:00');
-                          return isNaN(d.getTime()) ? '-' : d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
-                      }}
-                    />
-                    <YAxis hide />
-                    <Tooltip 
-                      cursor={{fill: '#f8fafc'}}
-                      contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'}}
-                      formatter={(val: number) => [formatCurrency(val), 'Saving']}
-                    />
-                    <Bar dataKey="saving" fill="#10b981" radius={[4, 4, 0, 0]} barSize={40} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-           </div>
+            </div>
+          </article>
 
-           <div className="bg-white p-8 rounded-[2.5rem] shadow-soft border border-slate-50">
-             <div className="mb-8 text-center">
-                <h3 className="text-xl font-bold text-slate-800">Gasto por Setor</h3>
-                <p className="text-xs text-slate-400 font-bold uppercase tracking-wider mt-1">Ranking de desembolso real</p>
-             </div>
-             <div className="space-y-6">
-                {deptData.slice(0, 5).map((d: any, i: number) => {
-                   const percentage = totalCost > 0 ? Math.round((d.realizado / totalCost) * 100) : 0;
-                   return (
-                     <div key={i} className="space-y-2">
-                        <div className="flex justify-between text-sm">
-                           <span className="font-bold text-slate-700">{d.name}</span>
-                           <span className="text-slate-400 font-bold">{formatCurrency(d.realizado)}</span>
-                        </div>
-                        <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                           <div className="h-full bg-blue-500 rounded-full" style={{ width: `${percentage}%` }}></div>
-                        </div>
-                     </div>
-                   );
-                })}
-                {deptData.length === 0 && <p className="text-center text-slate-300 py-10">Nenhum dado financeiro.</p>}
-             </div>
-           </div>
-      </div>
+          <article className="group relative min-h-[178px] overflow-hidden rounded-[1.6rem] border border-white/10 bg-[#285BD4] p-4 text-white shadow-xl shadow-blue-950/30 sm:p-5">
+            <DollarSign className="absolute -right-1 top-7 h-24 w-24 text-white opacity-[0.12] transition-transform duration-500 group-hover:-translate-x-2" strokeWidth={1.5} />
+            <div className="relative z-10 flex h-full flex-col">
+              <div className="flex items-start justify-between gap-3">
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/20 bg-white/15"><DollarSign className="h-4 w-4" /></span>
+                <span className="rounded-full border border-white/15 bg-white/15 px-2.5 py-1 text-[8px] font-black uppercase tracking-wide">{completedItems.length} pedidos</span>
+              </div>
+              <div className="mt-auto">
+                <p className="text-[10px] font-black uppercase tracking-[0.12em] text-blue-100">Gasto realizado</p>
+                <p className="mt-1 text-2xl font-black tracking-tight">{formatCurrency(totalCost)}</p>
+                <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-white/20 pt-2.5 text-[8px] font-extrabold text-blue-50">
+                  <span className="flex items-center gap-1"><ArrowUpRight className="h-3.5 w-3.5" /> Volume do período</span>
+                  <span>Realizado</span>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article className="group relative min-h-[178px] overflow-hidden rounded-[1.6rem] border border-white/10 bg-[#7134D1] p-4 text-white shadow-xl shadow-violet-950/30 sm:p-5">
+            <Receipt className="absolute -right-1 top-7 h-24 w-24 text-white opacity-[0.14] transition-transform duration-500 group-hover:-translate-x-2" strokeWidth={1.5} />
+            <div className="relative z-10 flex h-full flex-col">
+              <div className="flex items-start justify-between gap-3">
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/20 bg-white/15"><Receipt className="h-4 w-4" /></span>
+                <span className="rounded-full border border-white/15 bg-white/15 px-2.5 py-1 text-[8px] font-black uppercase tracking-wide">{completedItems.length} pedidos</span>
+              </div>
+              <div className="mt-auto">
+                <p className="text-[10px] font-black uppercase tracking-[0.12em] text-violet-100">Ticket médio</p>
+                <p className="mt-1 text-2xl font-black tracking-tight">{formatCurrency(averageTicket)}</p>
+                <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-white/20 pt-2.5 text-[8px] font-extrabold text-violet-50">
+                  <span>Valor médio por pedido</span><span>Estável</span>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article className="group relative min-h-[178px] overflow-hidden rounded-[1.6rem] border border-white/10 bg-[#C65B02] p-4 text-white shadow-xl shadow-orange-950/30 sm:p-5">
+            <Store className="absolute -right-1 top-7 h-24 w-24 text-white opacity-[0.14] transition-transform duration-500 group-hover:-translate-x-2" strokeWidth={1.5} />
+            <div className="relative z-10 flex h-full flex-col">
+              <div className="flex items-start justify-between gap-3">
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/20 bg-white/15"><Store className="h-4 w-4" /></span>
+                <span className="rounded-full border border-white/15 bg-white/15 px-2.5 py-1 text-[8px] font-black uppercase tracking-wide">Share: {supplierShare}%</span>
+              </div>
+              <div className="mt-auto min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-[0.12em] text-orange-100">Top fornecedor</p>
+                <p className="mt-1 truncate text-xl font-black tracking-tight" title={topSupplier.name}>{topSupplier.name}</p>
+                <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-white/20 pt-2.5 text-[8px] font-extrabold text-orange-50">
+                  <span>Volume alocado</span><span>{formatCurrency(topSupplier.value)}</span>
+                </div>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {operationalIndicators.map(({ label, value, icon: Icon, background, badge, detail }) => (
+            <article key={label} className={`group relative min-h-[132px] overflow-hidden rounded-[1.5rem] border border-white/10 p-4 text-white shadow-lg ${background}`}>
+              <Icon className="absolute -right-2 top-3 h-24 w-24 text-white opacity-[0.13] transition-transform duration-500 group-hover:-translate-x-1" strokeWidth={1.5} />
+              <div className="relative z-10 flex h-full flex-col">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-white/20 bg-white/15"><Icon className="h-4 w-4" /></span>
+                    <p className="text-[8px] font-black uppercase leading-tight tracking-wide">{label}</p>
+                  </div>
+                  <span className="shrink-0 rounded-full border border-white/20 bg-white/15 px-2 py-1 text-[6px] font-black uppercase">{badge}</span>
+                </div>
+                <div className="mt-auto flex items-end justify-between gap-3">
+                  <p className="text-2xl font-black tracking-tight">{value}</p>
+                  <p className="text-right text-[8px] font-extrabold text-white/85">{detail}</p>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.65fr)_minmax(300px,0.85fr)]">
+        <article className="min-w-0 rounded-[2rem] border border-slate-200 bg-white p-5 shadow-soft sm:p-7">
+          <div className="mb-7 flex items-start justify-between gap-4">
+            <div><h3 className="text-lg font-black text-slate-900">Evolução do saving</h3><p className="mt-1 text-[10px] font-bold uppercase tracking-[0.13em] text-slate-400">Economia conquistada por data</p></div>
+            <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-[9px] font-black uppercase tracking-wide text-emerald-700">{formatCurrency(totalSaving)}</span>
+          </div>
+          <div className="h-72 min-h-[288px] min-w-0 w-full">
+            {timelineData.length ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={timelineData} margin={{ top: 5, right: 0, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="4 4" vertical={false} stroke="#E2E8F0" />
+                  <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#64748B', fontWeight: 700 }} tickFormatter={date => new Date(`${date}T00:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })} />
+                  <YAxis hide />
+                  <Tooltip cursor={{ fill: '#F1F5F9' }} contentStyle={{ borderRadius: 16, border: '1px solid #E2E8F0', boxShadow: '0 12px 30px rgba(15,23,42,.12)', fontSize: 12, fontWeight: 700 }} formatter={(value: number) => [formatCurrency(value), 'Saving']} />
+                  <Bar dataKey="saving" fill="#009E68" radius={[8, 8, 2, 2]} maxBarSize={42} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : <div className="flex h-full items-center justify-center rounded-2xl bg-slate-50 text-sm font-bold text-slate-400">Sem dados de saving neste período.</div>}
+          </div>
+        </article>
+
+        <article className="min-w-0 rounded-[2rem] border border-slate-200 bg-white p-5 shadow-soft sm:p-7">
+          <div className="mb-7"><h3 className="text-lg font-black text-slate-900">Gasto por setor</h3><p className="mt-1 text-[10px] font-bold uppercase tracking-[0.13em] text-slate-400">Participação no desembolso</p></div>
+          <div className="space-y-5">
+            {departmentData.slice(0, 5).map((department, index) => {
+              const percentage = totalCost > 0 ? Math.round((department.value / totalCost) * 100) : 0;
+              return (
+                <div key={department.name}>
+                  <div className="mb-2 flex items-center justify-between gap-3 text-xs">
+                    <span className="truncate font-black text-slate-700"><span className="mr-2 text-slate-300">0{index + 1}</span>{department.name}</span>
+                    <span className="shrink-0 font-black text-slate-500">{percentage}%</span>
+                  </div>
+                  <div className="h-2.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-[#285BD4]" style={{ width: `${percentage}%` }} /></div>
+                  <p className="mt-1.5 text-right text-[10px] font-bold text-slate-400">{formatCurrency(department.value)}</p>
+                </div>
+              );
+            })}
+            {!departmentData.length && <div className="rounded-2xl bg-slate-50 py-12 text-center text-sm font-bold text-slate-400">Nenhum gasto realizado.</div>}
+          </div>
+        </article>
+      </section>
     </div>
   );
 };
