@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { X, ClipboardList, MessageSquare, Mail, Sparkles } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { ClipboardList, Mail, MessageSquare, Sparkles, X } from 'lucide-react';
 import { Department } from '../types';
 
 interface SmartCreateModalProps {
@@ -8,84 +8,105 @@ interface SmartCreateModalProps {
   onSubmit: (text: string, department: Department) => void;
 }
 
+const departments: Department[] = ['Manutenção', 'Produção', 'Ferramentaria', 'Logística', 'Escritório'];
+
 export const SmartCreateModal: React.FC<SmartCreateModalProps> = ({ isOpen, onClose, onSubmit }) => {
   const [pastedText, setPastedText] = useState('');
   const [selectedDept, setSelectedDept] = useState<Department>('Manutenção');
 
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
     onSubmit(pastedText, selectedDept);
     setPastedText('');
     onClose();
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 backdrop-blur-md p-4 animate-in fade-in zoom-in-95 duration-200">
-      <div className="bg-white rounded-[3rem] shadow-2xl w-full max-w-2xl border border-white relative overflow-hidden">
-        
-        <div className="p-10 pb-6">
-          <div className="flex justify-between items-start mb-4">
-            <div className="bg-blue-50 p-3 rounded-2xl text-blue-600 shadow-sm border border-blue-100">
-              <ClipboardList className="w-8 h-8" />
+    <div className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-slate-950/55 p-2 backdrop-blur-md sm:items-center sm:p-6">
+      <div role="dialog" aria-modal="true" aria-labelledby="smart-create-title" className="flex max-h-[calc(100dvh-1rem)] w-full max-w-2xl flex-col overflow-hidden rounded-[1.75rem] border border-white/70 bg-white shadow-2xl sm:max-h-[calc(100dvh-3rem)] sm:rounded-[2.25rem]">
+        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-100 px-5 py-4 sm:px-7 sm:py-5">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-blue-100 bg-blue-50 text-blue-600">
+              <ClipboardList className="h-5 w-5" />
             </div>
-            <button onClick={onClose} className="p-2 rounded-full hover:bg-slate-50 text-slate-400 transition-colors">
-              <X className="w-6 h-6" />
-            </button>
-          </div>
-          <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight">Captura Inteligente</h2>
-          <p className="text-slate-500 mt-2 font-medium">Cole as informações do WhatsApp, E-mail ou Planilha. Identificamos quantidades e itens automaticamente por linha.</p>
-        </div>
-
-        <form onSubmit={handleSubmit} className="p-10 pt-0 space-y-6">
-          <div className="relative">
-            <textarea 
-              required 
-              autoFocus
-              rows={8}
-              className="w-full bg-slate-50 border-2 border-slate-100 rounded-[2rem] py-6 px-8 focus:bg-white focus:border-blue-500 transition-all shadow-inner text-lg font-medium placeholder-slate-300 resize-none leading-relaxed" 
-              value={pastedText} 
-              onChange={e => setPastedText(e.target.value)} 
-              placeholder={`Exemplo:\n5x Rolamento 6204\n10 pacotes de Luva G\nCimento Votoran 50kg`} 
-            />
-            <div className="absolute right-6 bottom-6 flex gap-2 pointer-events-none opacity-50">
-              <MessageSquare className="w-5 h-5" />
-              <Mail className="w-5 h-5" />
+            <div className="min-w-0">
+              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-blue-600">Nova requisição</p>
+              <h2 id="smart-create-title" className="truncate text-xl font-black tracking-tight text-slate-900 sm:text-2xl">Captura inteligente</h2>
             </div>
           </div>
+          <button type="button" onClick={onClose} aria-label="Fechar nova requisição" className="rounded-xl p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
+            <X className="h-5 w-5" />
+          </button>
+        </header>
 
-          <div className="flex flex-col md:flex-row gap-4">
-            <div className="flex-1">
-              <label className="block text-xs font-bold text-slate-400 uppercase tracking-widest mb-3 ml-2">Setor Responsável</label>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                {(['Manutenção', 'Produção', 'Ferramentaria', 'Logística', 'Escritório'] as Department[]).map(dept => (
+        <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
+          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5 sm:px-7">
+            <div>
+              <h3 className="text-sm font-black text-slate-800">Cole a lista de itens</h3>
+              <p className="mt-1 text-xs leading-5 text-slate-500">Use uma linha por item. Quantidade e descrição serão identificadas automaticamente.</p>
+            </div>
+
+            <div className="relative">
+              <textarea
+                required
+                autoFocus
+                rows={6}
+                aria-label="Lista de itens da nova requisição"
+                className="min-h-40 w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4 text-base font-semibold leading-relaxed text-slate-800 outline-none transition placeholder:text-slate-300 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-100"
+                value={pastedText}
+                onChange={event => setPastedText(event.target.value)}
+                placeholder={'Exemplo:\n5x Rolamento 6204\n10 pacotes de Luva G\nCimento Votoran 50kg'}
+              />
+              <div className="pointer-events-none absolute bottom-4 right-4 flex gap-2 text-slate-300">
+                <MessageSquare className="h-4 w-4" />
+                <Mail className="h-4 w-4" />
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <label className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500">Setor responsável</label>
+                <span className="text-[10px] font-bold text-slate-400">Obrigatório</span>
+              </div>
+              <div role="group" aria-label="Setor responsável" className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {departments.map(department => (
                   <button
-                    key={dept}
+                    key={department}
                     type="button"
-                    onClick={() => setSelectedDept(dept)}
-                    className={`py-2.5 px-4 rounded-xl text-xs font-bold transition-all border ${selectedDept === dept ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-white text-slate-500 border-slate-200 hover:border-blue-300'}`}
+                    aria-pressed={selectedDept === department}
+                    onClick={() => setSelectedDept(department)}
+                    className={`min-h-11 rounded-xl border px-3 py-2 text-xs font-black transition ${selectedDept === department ? 'border-blue-600 bg-blue-600 text-white shadow-md shadow-blue-100' : 'border-slate-200 bg-white text-slate-600 hover:border-blue-300 hover:text-blue-700'}`}
                   >
-                    {dept}
+                    {department}
                   </button>
                 ))}
               </div>
             </div>
           </div>
 
-          <button 
-            type="submit" 
-            disabled={!pastedText.trim()}
-            className="w-full py-5 bg-blue-600 text-white rounded-[1.5rem] font-extrabold shadow-xl shadow-blue-200 hover:bg-blue-700 transition-all hover:scale-[1.01] active:scale-[0.98] flex items-center justify-center gap-3 disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed group"
-          >
-            <Sparkles className="w-5 h-5 group-hover:rotate-12 transition-transform" />
-            Criar Requisições e Iniciar Cotação
-          </button>
+          <footer className="flex shrink-0 flex-col-reverse gap-2 border-t border-slate-100 bg-white px-5 py-4 sm:flex-row sm:justify-end sm:px-7">
+            <button type="button" onClick={onClose} className="min-h-11 rounded-xl bg-slate-100 px-5 text-sm font-black text-slate-600 transition hover:bg-slate-200">Cancelar</button>
+            <button type="submit" disabled={!pastedText.trim()} className="flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 text-sm font-black text-white shadow-lg shadow-blue-100 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none">
+              <Sparkles className="h-4 w-4" />Criar requisições
+            </button>
+          </footer>
         </form>
-
-        <div className="p-6 bg-slate-50 border-t border-slate-100 text-center">
-          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em]">Tecnologia RA_PROC_V2 • Automação de Carga</p>
-        </div>
       </div>
     </div>
   );

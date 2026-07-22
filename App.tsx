@@ -130,14 +130,14 @@ function App() {
               onDelete={deleteRequisition}
             />
           ) : (
-            <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
-              <div className="xl:col-span-3">
+            <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_360px]">
+              <div className="min-w-0">
                 <HistoryTable 
                   requisitions={displayData} 
                   onItemClick={(item) => setSelectedHistoryItem(item)}
                 />
               </div>
-              <div className="xl:col-span-1">
+              <div className="min-w-0">
                   <ActivityCalendar 
                     requisitions={requisitions} 
                     onDayClick={(date, items) => setSelectedDayActivity({date, items})}

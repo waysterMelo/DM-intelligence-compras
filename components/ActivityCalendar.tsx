@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronLeft, ChevronRight, Circle } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Requisition } from '../types';
 
 interface ActivityCalendarProps {
@@ -7,109 +7,86 @@ interface ActivityCalendarProps {
   onDayClick?: (date: string, items: Requisition[]) => void;
 }
 
+const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+const weekDays = [['D', 'Dom'], ['S', 'Seg'], ['T', 'Ter'], ['Q', 'Qua'], ['Q', 'Qui'], ['S', 'Sex'], ['S', 'Sáb']];
+
 export const ActivityCalendar: React.FC<ActivityCalendarProps> = ({ requisitions, onDayClick }) => {
   const [currentDate, setCurrentDate] = useState(new Date());
-
-  const daysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
-  const firstDayOfMonth = (year: number, month: number) => new Date(year, month, 1).getDay();
-
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const firstDayOfMonth = new Date(year, month, 1).getDay();
+  const days = Array.from({ length: daysInMonth }, (_, index) => index + 1);
+  const padding = Array.from({ length: firstDayOfMonth }, (_, index) => index);
 
-  const days = Array.from({ length: daysInMonth(year, month) }, (_, i) => i + 1);
-  const padding = Array.from({ length: firstDayOfMonth(year, month) }, (_, i) => i);
-
-  const monthNames = [
-    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
-  ];
-
-  const prevMonth = () => setCurrentDate(new Date(year, month - 1, 1));
-  const nextMonth = () => setCurrentDate(new Date(year, month + 1, 1));
-
-  // Mapear dias com movimentação e agrupar itens
-  const activityMap = requisitions.reduce((acc: Record<string, Requisition[]>, req) => {
-    const date = req.requestDate; // YYYY-MM-DD
-    if (!acc[date]) acc[date] = [];
-    acc[date].push(req);
-    return acc;
+  const activityMap = requisitions.reduce((accumulator: Record<string, Requisition[]>, requisition) => {
+    if (!accumulator[requisition.requestDate]) accumulator[requisition.requestDate] = [];
+    accumulator[requisition.requestDate].push(requisition);
+    return accumulator;
   }, {});
 
-  const isToday = (day: number) => {
-    const today = new Date();
-    return today.getDate() === day && today.getMonth() === month && today.getFullYear() === year;
-  };
-
-  const getDayKey = (day: number) => {
-    const d = day.toString().padStart(2, '0');
-    const m = (month + 1).toString().padStart(2, '0');
-    return `${year}-${m}-${d}`;
-  };
+  const getDayKey = (day: number) => `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const today = new Date();
+  const isToday = (day: number) => today.getDate() === day && today.getMonth() === month && today.getFullYear() === year;
+  const monthActivity = days.reduce((total, day) => total + (activityMap[getDayKey(day)]?.length || 0), 0);
+  const activeDays = days.filter(day => activityMap[getDayKey(day)]?.length).length;
 
   return (
-    <div className="bg-white p-6 rounded-[2rem] shadow-soft border border-slate-50 h-full flex flex-col">
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h3 className="text-lg font-bold text-slate-800">Calendário</h3>
-          <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">{monthNames[month]} {year}</p>
+    <section className="flex h-fit flex-col rounded-[2rem] border border-slate-100 bg-white p-4 shadow-soft sm:p-5" aria-labelledby="calendar-title">
+      <header className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-blue-600"><CalendarDays className="h-5 w-5" /></div>
+          <div className="min-w-0">
+            <h2 id="calendar-title" className="text-base font-black text-slate-900">Calendário</h2>
+            <p className="truncate text-[10px] font-black uppercase tracking-[0.14em] text-slate-400">{monthNames[month]} {year}</p>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <button onClick={prevMonth} className="p-2 hover:bg-slate-50 rounded-xl transition-colors text-slate-400 hover:text-blue-600">
-            <ChevronLeft className="w-5 h-5" />
-          </button>
-          <button onClick={nextMonth} className="p-2 hover:bg-slate-50 rounded-xl transition-colors text-slate-400 hover:text-blue-600">
-            <ChevronRight className="w-5 h-5" />
-          </button>
+        <div className="flex gap-1">
+          <button type="button" aria-label="Mês anterior" onClick={() => setCurrentDate(new Date(year, month - 1, 1))} className="rounded-xl border border-slate-200 p-2 text-slate-500 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600"><ChevronLeft className="h-4 w-4" /></button>
+          <button type="button" aria-label="Próximo mês" onClick={() => setCurrentDate(new Date(year, month + 1, 1))} className="rounded-xl border border-slate-200 p-2 text-slate-500 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-600"><ChevronRight className="h-4 w-4" /></button>
         </div>
-      </div>
+      </header>
 
-      <div className="grid grid-cols-7 gap-1 mb-2">
-        {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(d => (
-          <div key={d} className="text-center text-[10px] font-bold text-slate-300 uppercase py-2">
-            {d}
+      <div className="grid grid-cols-7 gap-1" aria-hidden="true">
+        {weekDays.map(([short, full]) => (
+          <div key={full} className="py-2 text-center text-[9px] font-black uppercase text-slate-400">
+            <span className="sm:hidden">{short}</span><span className="hidden sm:inline">{full}</span>
           </div>
         ))}
       </div>
 
-      <div className="grid grid-cols-7 gap-1 flex-1">
-        {padding.map(p => <div key={`p-${p}`} />)}
+      <div className="grid grid-cols-7 gap-1">
+        {padding.map(value => <span key={`padding-${value}`} aria-hidden="true" />)}
         {days.map(day => {
           const key = getDayKey(day);
           const dayItems = activityMap[key] || [];
           const hasActivity = dayItems.length > 0;
-          
+          const current = isToday(day);
           return (
-            <div 
-              key={day} 
-              onClick={() => hasActivity && onDayClick?.(key, dayItems)}
-              className={`relative flex items-center justify-center aspect-square rounded-xl text-sm font-bold transition-all group
-                ${isToday(day) ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'text-slate-600 hover:bg-slate-50'}
-                ${hasActivity ? 'cursor-pointer hover:scale-105 active:scale-95' : 'cursor-default'}
-              `}
+            <button
+              key={day}
+              type="button"
+              disabled={!hasActivity}
+              onClick={() => onDayClick?.(key, dayItems)}
+              aria-label={`${day} de ${monthNames[month]}${hasActivity ? `, ${dayItems.length} ${dayItems.length === 1 ? 'movimentação' : 'movimentações'}` : ', sem movimentações'}`}
+              className={`relative flex min-h-10 items-center justify-center rounded-xl text-xs font-black transition sm:min-h-11 ${current ? 'bg-blue-600 text-white shadow-md shadow-blue-100' : hasActivity ? 'bg-blue-50 text-blue-700 hover:bg-blue-100 focus:ring-4 focus:ring-blue-100' : 'text-slate-500 disabled:opacity-100'} `}
             >
               {day}
-              {hasActivity && !isToday(day) && (
-                <div className="absolute bottom-1.5 flex gap-0.5">
-                   <div className="w-1 h-1 rounded-full bg-blue-500 shadow-[0_0_5px_#3b82f6]"></div>
-                </div>
-              )}
               {hasActivity && (
-                <div className="absolute -top-12 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-[10px] px-2 py-1 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-20 shadow-xl">
-                  {dayItems.length} {dayItems.length === 1 ? 'movimentação' : 'movimentações'}
-                </div>
+                <span className={`absolute right-1 top-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-0.5 text-[8px] ${current ? 'bg-white text-blue-700' : 'bg-blue-600 text-white'}`}>{dayItems.length}</span>
               )}
-            </div>
+            </button>
           );
         })}
       </div>
 
-      <div className="mt-6 pt-4 border-t border-slate-50 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">Atividade</span>
+      <footer className="mt-4 flex items-center justify-between gap-3 border-t border-slate-100 pt-4">
+        <div>
+          <p className="text-xs font-black text-slate-700">{monthActivity} {monthActivity === 1 ? 'movimentação' : 'movimentações'}</p>
+          <p className="text-[10px] font-bold text-slate-400">em {activeDays} {activeDays === 1 ? 'dia' : 'dias'} do mês</p>
         </div>
-        <span className="text-[10px] font-bold text-slate-300 font-mono">RA_PROC_V2</span>
-      </div>
-    </div>
+        <span className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wide text-blue-600"><span className="h-2 w-2 rounded-full bg-blue-500" />Com atividade</span>
+      </footer>
+    </section>
   );
 };

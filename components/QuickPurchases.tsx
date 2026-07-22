@@ -7,6 +7,7 @@ const departments: Department[] = ['Produção', 'Ferramentaria', 'Manutenção'
 const money = (value?: number | null) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
 const number = (value: string) => Number(value.replace(',', '.')) || 0;
 const taxFields = [['ICMS', 'icmsTotal'], ['IPI', 'ipiTotal'], ['PIS', 'pisTotal'], ['Cofins', 'cofinsTotal'], ['ICMS-ST', 'stTotal'], ['FCP', 'fcpTotal'], ['DIFAL', 'difalTotal']] as const;
+type ReconciliationFilter = 'ACTION_REQUIRED' | 'ALL' | 'CONFIRMED';
 
 interface QuickPurchasesProps {
   requisitions: Requisition[];
@@ -31,6 +32,7 @@ export const QuickPurchases: React.FC<QuickPurchasesProps> = ({ requisitions, on
   const [message, setMessage] = useState<string | null>(null);
   const [selected, setSelected] = useState<Requisition | null>(null);
   const [xmlFile, setXmlFile] = useState<File | null>(null);
+  const [reconciliationFilter, setReconciliationFilter] = useState<ReconciliationFilter>('ACTION_REQUIRED');
   const [form, setForm] = useState({ name: '', quantity: '1', unit: 'un', unitPrice: '', freight: '', supplierId: '', department: 'Produção' as Department, requester: defaultRequester, paymentTerms: '', notes: '' });
   const [invoice, setInvoice] = useState({ number: '', series: '', accessKey: '', issueDate: new Date().toISOString().slice(0, 10), supplierCnpj: '', productTotal: '', freightTotal: '', discountTotal: '', grossTotal: '', icmsTotal: '', ipiTotal: '', pisTotal: '', cofinsTotal: '', stTotal: '', fcpTotal: '', difalTotal: '' });
 
@@ -46,8 +48,24 @@ export const QuickPurchases: React.FC<QuickPurchasesProps> = ({ requisitions, on
     if (defaultRequester) setForm(current => current.requester ? current : { ...current, requester: defaultRequester });
   }, [defaultRequester]);
 
-  const purchases = useMemo(() => requisitions.filter(item => ['Comprado', 'Entregue'].includes(item.status)), [requisitions]);
-  const pendingCount = purchases.filter(item => item.costReconciliationStatus === 'PENDING_INVOICE').length;
+  const purchases = useMemo(() => {
+    const priority: Record<CostReconciliationStatus, number> = { DIVERGENCE_FOUND: 0, INVOICE_RECEIVED: 1, PENDING_INVOICE: 2, COST_CONFIRMED: 3, NOT_REQUIRED: 4 };
+    return requisitions
+      .filter(item => ['Comprado', 'Entregue'].includes(item.status))
+      .sort((left, right) => priority[left.costReconciliationStatus || 'PENDING_INVOICE'] - priority[right.costReconciliationStatus || 'PENDING_INVOICE']);
+  }, [requisitions]);
+  const reconciliationCounts = useMemo(() => ({
+    pending: purchases.filter(item => item.costReconciliationStatus === 'PENDING_INVOICE').length,
+    action: purchases.filter(item => ['PENDING_INVOICE', 'INVOICE_RECEIVED', 'DIVERGENCE_FOUND'].includes(item.costReconciliationStatus || 'PENDING_INVOICE')).length,
+    divergence: purchases.filter(item => item.costReconciliationStatus === 'DIVERGENCE_FOUND').length,
+    confirmed: purchases.filter(item => item.costReconciliationStatus === 'COST_CONFIRMED').length,
+  }), [purchases]);
+  const visiblePurchases = purchases.filter(item => {
+    const status = item.costReconciliationStatus || 'PENDING_INVOICE';
+    if (reconciliationFilter === 'ACTION_REQUIRED') return ['PENDING_INVOICE', 'INVOICE_RECEIVED', 'DIVERGENCE_FOUND'].includes(status);
+    if (reconciliationFilter === 'CONFIRMED') return status === 'COST_CONFIRMED';
+    return true;
+  });
 
   const createPurchase = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -127,16 +145,90 @@ export const QuickPurchases: React.FC<QuickPurchasesProps> = ({ requisitions, on
           </div>
         </form>
 
-        <section className="overflow-hidden rounded-[2rem] border border-slate-100 bg-white shadow-soft"><div className="flex justify-between border-b border-slate-100 p-5"><div><h2 className="text-xl font-black">Conferência de notas</h2><p className="text-xs text-slate-400">{pendingCount} {pendingCount === 1 ? 'compra aguardando' : 'compras aguardando'} NF</p></div><Receipt className="h-6 w-6 text-blue-500" /></div><div className="divide-y divide-slate-100">{purchases.map(purchase => {
-          const status = purchase.costReconciliationStatus || 'PENDING_INVOICE';
-          const invoiceData = purchase.purchaseInvoice;
-          return <article key={purchase.id} className="p-5"><div className="flex flex-wrap justify-between gap-3"><div><h3 className="font-black text-slate-800">{purchase.name}</h3><p className="text-xs text-slate-400">{purchase.quantity} {purchase.unit} · {purchase.quotes.find(quote => quote.isSelected)?.supplierName || purchase.quotes[0]?.supplierName}</p></div><span className={`h-fit rounded-full px-3 py-1 text-[10px] font-black uppercase ${status === 'DIVERGENCE_FOUND' ? 'bg-rose-100 text-rose-700' : status === 'COST_CONFIRMED' ? 'bg-emerald-100 text-emerald-700' : status === 'INVOICE_RECEIVED' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>{statusLabels[status]}</span></div>
-            {invoiceData && <div className="mt-4 grid grid-cols-2 gap-3 text-xs sm:grid-cols-3 xl:grid-cols-6">{[
-              ['Cotado bruto', invoiceData.quotedGrossTotal], ['NF', invoiceData.grossTotal], ['Dif. frete', invoiceData.freightVariance], ['Dif. tributos', invoiceData.taxVariance], ['TCO realizado', invoiceData.actualNetEstimatedTotal], ['Dif. TCO', invoiceData.netVariance],
-            ].map(([label, value]) => <div key={String(label)}><span className="text-slate-400">{label}</span><p className={`font-black ${label === 'Dif. TCO' && Math.abs(Number(value)) > 0.01 ? 'text-rose-600' : ''}`}>{money(Number(value))}</p></div>)}</div>}
-            <div className="mt-4 flex flex-wrap gap-2">{status === 'PENDING_INVOICE' && <button onClick={() => openInvoice(purchase)} className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2 text-xs font-black text-white"><Upload className="h-4 w-4" />Receber NF</button>}{status === 'INVOICE_RECEIVED' && <button disabled={saving} onClick={() => confirmCost(purchase)} className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-xs font-black text-white"><CheckCircle2 className="h-4 w-4" />Confirmar custo</button>}{status === 'DIVERGENCE_FOUND' && <button disabled={saving} onClick={() => confirmCost(purchase)} className="flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-xs font-black text-white"><AlertTriangle className="h-4 w-4" />Aceitar divergência e confirmar</button>}</div>
-          </article>;
-        })}{!purchases.length && <div className="p-14 text-center text-sm text-slate-400"><Clock3 className="mx-auto mb-3 h-10 w-10 text-slate-200" />Nenhuma compra concluída.</div>}</div></section>
+        <section className="min-w-0 overflow-hidden rounded-[2rem] border border-slate-100 bg-white shadow-soft" aria-labelledby="invoice-queue-title">
+          <header className="border-b border-slate-100 p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.16em] text-blue-600">Operação diária</p>
+                <h2 id="invoice-queue-title" className="mt-1 text-xl font-black">Conferência de notas</h2>
+                <p className="mt-1 text-xs text-slate-400">Priorize notas pendentes e divergências antes de consultar o histórico.</p>
+              </div>
+              <div className="rounded-2xl bg-blue-50 p-3 text-blue-600"><Receipt className="h-5 w-5" /></div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-3 gap-2">
+              <div className="rounded-xl bg-amber-50 p-3"><p className="text-[9px] font-black uppercase tracking-wide text-amber-700">Aguardando NF</p><p className="mt-1 text-xl font-black text-amber-800">{reconciliationCounts.pending}</p></div>
+              <div className="rounded-xl bg-rose-50 p-3"><p className="text-[9px] font-black uppercase tracking-wide text-rose-700">Divergências</p><p className="mt-1 text-xl font-black text-rose-800">{reconciliationCounts.divergence}</p></div>
+              <div className="rounded-xl bg-emerald-50 p-3"><p className="text-[9px] font-black uppercase tracking-wide text-emerald-700">Conferidas</p><p className="mt-1 text-xl font-black text-emerald-800">{reconciliationCounts.confirmed}</p></div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2" role="group" aria-label="Filtrar conferência de notas">
+              {([
+                ['ACTION_REQUIRED', `Ação necessária (${reconciliationCounts.action})`],
+                ['ALL', `Todas (${purchases.length})`],
+                ['CONFIRMED', `Conferidas (${reconciliationCounts.confirmed})`],
+              ] as const).map(([filter, label]) => (
+                <button key={filter} type="button" aria-pressed={reconciliationFilter === filter} onClick={() => setReconciliationFilter(filter)} className={`rounded-xl px-3 py-2 text-[10px] font-black transition ${reconciliationFilter === filter ? 'bg-slate-950 text-white shadow-md' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{label}</button>
+              ))}
+            </div>
+          </header>
+
+          <div className="grid gap-3 p-4 2xl:grid-cols-2">
+            {visiblePurchases.map(purchase => {
+              const status = purchase.costReconciliationStatus || 'PENDING_INVOICE';
+              const invoiceData = purchase.purchaseInvoice;
+              const winner = purchase.quotes.find(quote => quote.isSelected) || purchase.quotes[0];
+              const statusClass = status === 'DIVERGENCE_FOUND' ? 'border-rose-200 bg-rose-50/30' : status === 'COST_CONFIRMED' ? 'border-emerald-200 bg-emerald-50/20' : status === 'INVOICE_RECEIVED' ? 'border-blue-200 bg-blue-50/20' : 'border-amber-200 bg-amber-50/30';
+              const badgeClass = status === 'DIVERGENCE_FOUND' ? 'bg-rose-100 text-rose-700' : status === 'COST_CONFIRMED' ? 'bg-emerald-100 text-emerald-700' : status === 'INVOICE_RECEIVED' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700';
+
+              return (
+                <article key={purchase.id} className={`flex min-w-0 flex-col rounded-2xl border p-4 ${statusClass}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h3 className="truncate text-sm font-black text-slate-900">{purchase.name}</h3>
+                      <p className="mt-1 truncate text-[10px] font-bold text-slate-500">{purchase.quantity} {purchase.unit} · {winner?.supplierName || 'Fornecedor não informado'}</p>
+                    </div>
+                    <span className={`h-fit shrink-0 rounded-full px-2.5 py-1 text-[9px] font-black uppercase ${badgeClass}`}>{statusLabels[status]}</span>
+                  </div>
+
+                  {invoiceData ? (
+                    <>
+                      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                        <div className="rounded-xl bg-white/80 p-3"><span className="text-[9px] font-bold text-slate-400">Cotado</span><p className="mt-1 text-xs font-black text-slate-800">{money(invoiceData.quotedGrossTotal)}</p></div>
+                        <div className="rounded-xl bg-white/80 p-3"><span className="text-[9px] font-bold text-slate-400">Total da NF</span><p className="mt-1 text-xs font-black text-slate-800">{money(invoiceData.grossTotal)}</p></div>
+                        <div className="col-span-2 rounded-xl bg-white/80 p-3 sm:col-span-1"><span className="text-[9px] font-bold text-slate-400">Dif. TCO</span><p className={`mt-1 text-xs font-black ${Math.abs(invoiceData.netVariance || 0) > 0.01 ? 'text-rose-600' : 'text-emerald-700'}`}>{money(invoiceData.netVariance)}</p></div>
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/70 pt-3">
+                        <div><p className="text-[9px] font-bold uppercase tracking-wide text-slate-400">TCO realizado</p><p className="text-base font-black text-slate-900">{money(invoiceData.actualNetEstimatedTotal)}</p></div>
+                        <div className="flex flex-wrap gap-1.5 text-[9px] font-bold text-slate-500"><span className="rounded-lg bg-white px-2 py-1">Frete {money(invoiceData.freightVariance)}</span><span className="rounded-lg bg-white px-2 py-1">Tributos {money(invoiceData.taxVariance)}</span></div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="mt-4 rounded-xl border border-dashed border-amber-200 bg-white/70 p-4">
+                      <p className="text-xs font-black text-slate-700">Nota ainda não recebida</p>
+                      <p className="mt-1 text-[10px] leading-4 text-slate-500">Valor cotado: <strong className="text-slate-800">{money(winner?.grossTotalCost)}</strong>. Importe o XML ou informe a nota manualmente.</p>
+                    </div>
+                  )}
+
+                  <div className="mt-auto pt-4">
+                    {status === 'PENDING_INVOICE' && <button type="button" onClick={() => openInvoice(purchase)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-black text-white shadow-md shadow-blue-100"><Upload className="h-4 w-4" />Receber NF</button>}
+                    {status === 'INVOICE_RECEIVED' && <button type="button" disabled={saving} onClick={() => confirmCost(purchase)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-xs font-black text-white"><CheckCircle2 className="h-4 w-4" />Confirmar custo</button>}
+                    {status === 'DIVERGENCE_FOUND' && <button type="button" disabled={saving} onClick={() => confirmCost(purchase)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-xs font-black text-white"><AlertTriangle className="h-4 w-4" />Aceitar divergência e confirmar</button>}
+                    {status === 'COST_CONFIRMED' && <p className="flex items-center gap-2 text-[10px] font-black text-emerald-700"><CheckCircle2 className="h-4 w-4" />Conferência finalizada</p>}
+                  </div>
+                </article>
+              );
+            })}
+
+            {!visiblePurchases.length && (
+              <div className="col-span-full flex min-h-56 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 px-6 text-center">
+                <Clock3 className="mb-3 h-9 w-9 text-slate-300" />
+                <p className="text-sm font-black text-slate-700">Nenhuma nota neste filtro</p>
+                <p className="mt-1 text-xs text-slate-400">A fila está em dia ou os itens estão em outra etapa.</p>
+              </div>
+            )}
+          </div>
+        </section>
       </div>
       {message && <div role="status" className="rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm font-bold text-blue-800">{message}</div>}
 
