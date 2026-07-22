@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo } from 'react';
-import { Requisition } from '../types';
+import { Requisition, StatsData } from '../types';
 import { 
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   BarChart, Bar
@@ -13,9 +13,10 @@ import {
 
 interface StatsCardsProps {
   requisitions: Requisition[];
+  stats: StatsData;
 }
 
-export const StatsCards: React.FC<StatsCardsProps> = ({ requisitions }) => {
+export const StatsCards: React.FC<StatsCardsProps> = ({ requisitions, stats }) => {
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
 
@@ -31,7 +32,7 @@ export const StatsCards: React.FC<StatsCardsProps> = ({ requisitions }) => {
   const completedItems = filteredData.filter(r => r.status === 'Comprado' || r.status === 'Entregue');
   
   const totalCost = completedItems.reduce((acc, curr) => {
-    const cost = Math.round((curr.finalCost || 0) * curr.quantity * 100) / 100;
+    const cost = curr.purchaseInvoice?.grossTotal ?? Math.round((curr.finalCost || 0) * curr.quantity * 100) / 100;
     return acc + cost;
   }, 0);
 
@@ -65,7 +66,7 @@ export const StatsCards: React.FC<StatsCardsProps> = ({ requisitions }) => {
     completedItems.forEach(item => {
        const winningQuote = item.quotes?.find(q => q.isSelected);
        if(winningQuote && item.finalCost) {
-         const cost = item.finalCost * item.quantity;
+         const cost = item.purchaseInvoice?.grossTotal ?? item.finalCost * item.quantity;
          const name = winningQuote.supplierName;
          map[name] = (map[name] || 0) + cost;
        }
@@ -98,7 +99,7 @@ export const StatsCards: React.FC<StatsCardsProps> = ({ requisitions }) => {
         const itemSaving = Math.round(diffUnit * curr.quantity * 100) / 100;
         
         acc[date].saving += itemSaving;
-        acc[date].gasto += Math.round((curr.finalCost * curr.quantity) * 100) / 100;
+        acc[date].gasto += curr.purchaseInvoice?.grossTotal ?? Math.round((curr.finalCost * curr.quantity) * 100) / 100;
       }
       return acc;
     }, {});
@@ -108,7 +109,7 @@ export const StatsCards: React.FC<StatsCardsProps> = ({ requisitions }) => {
 
   const deptData = filteredData.reduce((acc: any, curr) => {
     const existing = acc.find((d: any) => d.name === curr.department);
-    const cost = Math.round(((curr.finalCost || 0) * curr.quantity) * 100) / 100;
+    const cost = curr.purchaseInvoice?.grossTotal ?? Math.round(((curr.finalCost || 0) * curr.quantity) * 100) / 100;
     
     if (existing) {
       existing.realizado += cost;
@@ -228,6 +229,20 @@ export const StatsCards: React.FC<StatsCardsProps> = ({ requisitions }) => {
             {topSupplier.value > 0 ? `${formatCurrency(topSupplier.value)} em volume` : 'Sem dados no período'}
           </p>
         </div>
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {[
+          { label: 'Aguardando NF', value: String(stats.awaitingInvoiceCount || 0) },
+          { label: 'Divergências', value: String(stats.invoiceDivergenceCount || 0) },
+          { label: 'Variação cotação × NF', value: formatCurrency(stats.invoiceVarianceTotal || 0) },
+          { label: 'Prazo médio', value: `${Math.round(stats.averageLeadTime || 0)} dias` },
+        ].map(indicator => (
+          <div key={indicator.label} className="bg-white border border-slate-100 rounded-2xl p-4">
+            <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">{indicator.label}</p>
+            <p className="text-xl font-black text-slate-800 mt-1">{indicator.value}</p>
+          </div>
+        ))}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

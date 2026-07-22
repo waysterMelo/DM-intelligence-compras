@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma.service';
-import { Prisma } from '@prisma/client';
+import { ItemUseType, Prisma } from '@prisma/client';
 
 // O CompaniesService é responsável pela gestão de Fornecedores e da Compradora (RA Polymers)
 // É aqui que guardamos o "DNA Fiscal" de cada parceiro de negócio
@@ -107,6 +107,65 @@ export class CompaniesService {
       update: sanitized,
       create: { ...sanitized, fornecedorId: buyer.id }
     });
+  }
+
+  async getTcoAssumptions() {
+    const buyer = await this.findBuyer();
+    if (!buyer) throw new BadRequestException('Empresa compradora não cadastrada.');
+    const existing = await this.prisma.tcoAssumption.findMany({
+      where: { fornecedorId: buyer.id },
+      orderBy: { itemUseType: 'asc' },
+    });
+    if (existing.length === 4) return existing;
+
+    const legacy = await this.getTaxConfig();
+    const uses: ItemUseType[] = ['INDUSTRIAL_INPUT', 'RESALE', 'FIXED_ASSET', 'CONSUMPTION'];
+    await Promise.all(uses.map(itemUseType => {
+      const zero = itemUseType === 'CONSUMPTION';
+      return this.prisma.tcoAssumption.upsert({
+        where: { fornecedorId_itemUseType: { fornecedorId: buyer.id, itemUseType } },
+        update: {},
+        create: {
+          fornecedorId: buyer.id,
+          itemUseType,
+          icmsRecoveryPct: zero ? 0 : legacy.icmsCreditPercentage,
+          ipiRecoveryPct: zero ? 0 : legacy.ipiCreditPercentage,
+          pisRecoveryPct: zero ? 0 : legacy.pisCreditPercentage,
+          cofinsRecoveryPct: zero ? 0 : legacy.cofinsCreditPercentage,
+        },
+      });
+    }));
+    return this.prisma.tcoAssumption.findMany({
+      where: { fornecedorId: buyer.id },
+      orderBy: { itemUseType: 'asc' },
+    });
+  }
+
+  async updateTcoAssumptions(rows: any[]) {
+    const buyer = await this.findBuyer();
+    if (!buyer) throw new BadRequestException('Empresa compradora não cadastrada.');
+    if (!Array.isArray(rows)) throw new BadRequestException('Informe a matriz de premissas de TCO.');
+    const validUses: ItemUseType[] = ['INDUSTRIAL_INPUT', 'RESALE', 'FIXED_ASSET', 'CONSUMPTION'];
+    const keys = ['icmsRecoveryPct', 'ipiRecoveryPct', 'pisRecoveryPct', 'cofinsRecoveryPct'] as const;
+
+    const sanitized = rows.map(row => {
+      if (!validUses.includes(row.itemUseType)) throw new BadRequestException('Destinação inválida.');
+      const values = Object.fromEntries(keys.map(key => {
+        const value = Number(row[key]);
+        if (!Number.isFinite(value) || value < 0 || value > 100) {
+          throw new BadRequestException(`${key} deve estar entre 0 e 100.`);
+        }
+        return [key, value];
+      }));
+      return { itemUseType: row.itemUseType as ItemUseType, ...values };
+    });
+
+    await this.prisma.$transaction(sanitized.map(row => this.prisma.tcoAssumption.upsert({
+      where: { fornecedorId_itemUseType: { fornecedorId: buyer.id, itemUseType: row.itemUseType } },
+      update: row,
+      create: { ...row, fornecedorId: buyer.id },
+    })));
+    return this.getTcoAssumptions();
   }
 
   // Atualiza dados de uma empresa

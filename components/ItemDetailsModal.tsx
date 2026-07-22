@@ -130,7 +130,7 @@ export const ItemDetailsModal: React.FC<ItemDetailsModalProps> = ({ data, onClos
           </div>
 
           <div className="mb-10">
-            <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 ml-2">Detalhamento Técnico e Fiscal</h3>
+            <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 ml-2">Detalhamento da cotação e TCO</h3>
             <div className="bg-white border border-slate-100 rounded-[2rem] overflow-hidden overflow-x-auto">
               {data.quotes && data.quotes.length > 0 ? (
                 <table className="w-full min-w-[600px]">
@@ -141,17 +141,15 @@ export const ItemDetailsModal: React.FC<ItemDetailsModalProps> = ({ data, onClos
                       <th className="px-4 py-4 text-right text-[10px] font-black text-amber-500 uppercase">IPI (%)</th>
                       <th className="px-4 py-4 text-right text-[10px] font-black text-amber-500 uppercase">ICMS (%)</th>
                       <th className="px-4 py-4 text-right text-[10px] font-black text-amber-500 uppercase">PIS/COFINS</th>
-                      <th className="px-6 py-4 text-right text-[10px] font-black text-emerald-600 uppercase">Preço Líquido</th>
+                      <th className="px-6 py-4 text-right text-[10px] font-black text-emerald-600 uppercase">TCO estimado</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
-                    {data.quotes.map((quote, idx) => {
+                    {data.quotes.map((quote) => {
                       const isWinner = quote.isSelected;
-                      const netPrice = quote.price - (quote.creditIcms || 0) - (quote.creditPis || 0) - (quote.creditCofins || 0); // Aproximação simples se netCost não vier preenchido
-                      const displayNet = quote.netCost || netPrice;
 
                       return (
-                        <tr key={idx} className={isWinner ? 'bg-blue-50/30' : ''}>
+                        <tr key={quote.id} className={isWinner ? 'bg-blue-50/30' : ''}>
                           <td className="px-6 py-4">
                             <span className={`text-sm font-bold ${isWinner ? 'text-blue-700' : 'text-slate-600'}`}>
                               {quote.supplierName || 'Fornecedor Desconhecido'} {isWinner && '🏆'}
@@ -170,7 +168,7 @@ export const ItemDetailsModal: React.FC<ItemDetailsModalProps> = ({ data, onClos
                             {(quote.pisRate || 0) + (quote.cofinsRate || 0) > 0 ? `${((quote.pisRate||0) + (quote.cofinsRate||0)).toFixed(2)}%` : '-'}
                           </td>
                           <td className="px-6 py-4 text-right text-sm font-black text-emerald-600">
-                            {formatCurrency(displayNet)}
+                            {quote.estimatedNetTotal === undefined ? 'Incompleto' : formatCurrency(quote.estimatedNetTotal)}
                           </td>
                         </tr>
                       )

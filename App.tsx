@@ -30,7 +30,9 @@ function App() {
     updateStatus,
     updateQuotes,
     createQuickPurchase,
-    finalizeQuickPurchaseTax,
+    createManualInvoice,
+    createXmlInvoice,
+    reconcileInvoice,
     deleteRequisition,
     searchTerm, setSearchTerm,
     statusFilter, setStatusFilter,
@@ -70,8 +72,8 @@ function App() {
       case 'table': return 'Registro completo de todas as movimentações.';
       case 'dashboard': return 'Indicadores de performance e saving.';
       case 'search': return 'Pesquisa de preços e fornecedores históricos.';
-      case 'companies': return 'Cadastro de fornecedores e regimes tributários.';
-      case 'quick': return 'Compre agora e regularize os impostos quando a nota fiscal chegar.';
+      case 'companies': return 'Cadastro de fornecedores e premissas comerciais de TCO.';
+      case 'quick': return 'Registre a compra agora e confira o custo quando a nota chegar.';
       default: return `Fila de Suprimentos: ${stats.pendingCount} itens aguardando ação.`;
     }
   };
@@ -106,7 +108,7 @@ function App() {
 
         <div className="flex-1 overflow-y-auto no-scrollbar pr-1">
           {view === 'dashboard' ? (
-            <StatsCards requisitions={requisitions} />
+            <StatsCards requisitions={requisitions} stats={stats} />
           ) : view === 'search' ? (
             <QuickSearch requisitions={requisitions} />
           ) : view === 'companies' ? (
@@ -115,7 +117,9 @@ function App() {
             <QuickPurchases
               requisitions={requisitions}
               onCreate={createQuickPurchase}
-              onFiscalEntry={finalizeQuickPurchaseTax}
+              onManualInvoice={createManualInvoice}
+              onXmlInvoice={createXmlInvoice}
+              onReconcile={reconcileInvoice}
             />
           ) : view === 'quotes' ? (
             <PurchasingHub 

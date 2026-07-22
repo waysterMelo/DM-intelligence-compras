@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Patch, Put, Delete, Body, Param } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Put, Delete, Body, Param, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { RequisitionsService } from './requisitions.service';
 
 // O Controller define as URLs (Rotas) que o seu Frontend poderá chamar
@@ -41,9 +42,20 @@ export class RequisitionsController {
     return this.requisitionsService.updateQuotes(id, quotes);
   }
 
-  @Post(':id/fiscal-entry')
-  async finalizeQuickPurchaseTax(@Param('id') id: string, @Body() data: any) {
-    return this.requisitionsService.finalizeQuickPurchaseTax(id, data);
+  @Post(':id/invoice/manual')
+  createManualInvoice(@Param('id') id: string, @Body() data: any) {
+    return this.requisitionsService.createManualInvoice(id, data);
+  }
+
+  @Post(':id/invoice/xml')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 2 * 1024 * 1024 } }))
+  createXmlInvoice(@Param('id') id: string, @UploadedFile() file: any) {
+    return this.requisitionsService.createXmlInvoice(id, file);
+  }
+
+  @Post(':id/reconcile')
+  reconcileInvoice(@Param('id') id: string, @Body() data: { acceptDivergence?: boolean }) {
+    return this.requisitionsService.reconcileInvoice(id, data);
   }
 
   // Rota DELETE /requisitions/:id -> Remove a requisição

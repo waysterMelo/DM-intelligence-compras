@@ -2,13 +2,15 @@ export type Status = 'Solicitado' | 'Cotando' | 'Aprovado' | 'Comprado' | 'Entre
 export type Priority = 'Baixa' | 'Normal' | 'Alta' | 'Urgente';
 export type Department = 'Produção' | 'Ferramentaria' | 'Manutenção' | 'Escritório' | 'Logística';
 
-// --- MÓDULO FISCAL (FASE 1) ---
+// --- DADOS COMERCIAIS PARA COMPRAS E TCO ---
 
 export type TaxRegime = 'SIMPLES' | 'PRESUMIDO' | 'REAL';
 export type CompanyRole = 'SUPPLIER' | 'BUYER';
 export type ItemUseType = 'RESALE' | 'INDUSTRIAL_INPUT' | 'CONSUMPTION' | 'FIXED_ASSET';
 export type PurchaseMode = 'STRATEGIC' | 'QUICK';
-export type TaxStatus = 'NOT_STARTED' | 'PENDING_INVOICE' | 'CALCULATED';
+export type CostReconciliationStatus = 'NOT_REQUIRED' | 'PENDING_INVOICE' | 'INVOICE_RECEIVED' | 'COST_CONFIRMED' | 'DIVERGENCE_FOUND';
+export type DataCompleteness = 'INCOMPLETE' | 'COMPLETE';
+export type CostTreatment = 'INCLUDED' | 'ADDITIONAL';
 
 export interface Company {
   id: string;
@@ -28,8 +30,11 @@ export interface SupplierQuote {
   paymentTerms?: string; 
   isSelected: boolean;
 
-  // Campos Fiscais de Entrada (Para cálculo de TCO)
+  // Dados informados pelo fornecedor para estimativa de TCO
   itemUseType?: ItemUseType;
+  ncm?: string;
+  cest?: string;
+  cfop?: string;
   cstIcms?: string;
   csosn?: string;
   hasIcmsSt?: boolean;
@@ -53,12 +58,25 @@ export interface SupplierQuote {
   ibsRate?: number;
   ibsValue?: number;
 
+  stRate?: number;
+  stValue?: number;
+  fcpRate?: number;
+  fcpValue?: number;
+  difalRate?: number;
+  difalValue?: number;
+  hasFcp?: boolean;
+  hasDifal?: boolean;
+  ipiTreatment?: CostTreatment;
+  stTreatment?: CostTreatment;
+  fcpTreatment?: CostTreatment;
+  difalTreatment?: CostTreatment;
+
   utilizationIcms?: number;
   utilizationPis?: number;
   utilizationCofins?: number;
   utilizationIpi?: number;
 
-  // Resultados Fiscais (Custo Efetivo)
+  // Resultados comerciais mantidos por compatibilidade
   creditIcms?: number;
   creditPis?: number;
   creditCofins?: number;
@@ -68,6 +86,13 @@ export interface SupplierQuote {
   taxMemory?: any;      // Memória de cálculo auditável
 
   // Link com a Empresa Cadastrada
+  grossTotalCost?: number;
+  estimatedCreditTotal?: number;
+  estimatedNetTotal?: number;
+  dataCompleteness?: DataCompleteness;
+  calculationSource?: 'SUPPLIER_QUOTE' | 'MANUAL_OVERRIDE' | 'INVOICE' | 'LEGACY_ESTIMATE';
+  tcoMemory?: { missingFields?: string[]; [key: string]: any };
+
   companyId?: string;
   company?: Company;
 }
@@ -89,12 +114,52 @@ export interface Requisition {
   requester: string;
   notes?: string;
   purchaseMode?: PurchaseMode;
-  taxStatus?: TaxStatus;
-  invoiceNumber?: string;
-  invoiceAccessKey?: string;
-  invoiceIssueDate?: string;
-  taxReviewedAt?: string;
+  costReconciliationStatus?: CostReconciliationStatus;
+  costReconciledAt?: string;
+  purchaseInvoice?: PurchaseInvoice | null;
   quotes: SupplierQuote[];
+}
+
+export interface PurchaseInvoice {
+  id: string;
+  number: string;
+  series?: string;
+  accessKey: string;
+  issueDate: string;
+  supplierCnpj: string;
+  importSource: 'MANUAL' | 'XML';
+  productTotal: number;
+  freightTotal: number;
+  discountTotal: number;
+  grossTotal: number;
+  icmsTotal: number;
+  ipiTotal: number;
+  pisTotal: number;
+  cofinsTotal: number;
+  stTotal: number;
+  fcpTotal: number;
+  difalTotal: number;
+  cbsTotal: number;
+  ibsTotal: number;
+  estimatedRecoverableTotal: number;
+  actualNetEstimatedTotal: number;
+  quotedGrossTotal: number;
+  quotedNetEstimatedTotal: number;
+  quotedFreightTotal: number;
+  quotedTaxTotal: number;
+  actualTaxTotal: number;
+  freightVariance: number;
+  taxVariance: number;
+  grossVariance: number;
+  netVariance: number;
+}
+
+export interface TcoAssumption {
+  itemUseType: ItemUseType;
+  icmsRecoveryPct: number;
+  ipiRecoveryPct: number;
+  pisRecoveryPct: number;
+  cofinsRecoveryPct: number;
 }
 
 export interface QuickPurchaseInput {
@@ -110,11 +175,25 @@ export interface QuickPurchaseInput {
   notes?: string;
 }
 
-export interface QuickPurchaseTaxInput {
-  invoiceNumber: string;
-  invoiceAccessKey?: string;
-  invoiceIssueDate: string;
-  quote: SupplierQuote;
+export interface ManualInvoiceInput {
+  number: string;
+  series?: string;
+  accessKey: string;
+  issueDate: string;
+  supplierCnpj: string;
+  productTotal?: number;
+  freightTotal?: number;
+  discountTotal?: number;
+  grossTotal: number;
+  icmsTotal?: number;
+  ipiTotal?: number;
+  pisTotal?: number;
+  cofinsTotal?: number;
+  stTotal?: number;
+  fcpTotal?: number;
+  difalTotal?: number;
+  cbsTotal?: number;
+  ibsTotal?: number;
 }
 
 export interface StatsData {
@@ -122,4 +201,8 @@ export interface StatsData {
   totalSpent: number;
   pendingCount: number;
   completedCount: number;
+  awaitingInvoiceCount?: number;
+  invoiceDivergenceCount?: number;
+  invoiceVarianceTotal?: number;
+  averageLeadTime?: number;
 }

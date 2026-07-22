@@ -15,15 +15,33 @@ export class StatsService {
 
     // 2. Soma de quanto já foi gasto (apenas requisições com status 'Comprado' ou 'Entregue')
     const completedPurchases = await this.prisma.requisition.findMany({
-      select: { finalCost: true, quantity: true },
+      select: {
+        finalCost: true,
+        quantity: true,
+        purchaseInvoice: true,
+        quotes: { where: { isSelected: true }, select: { leadTime: true } },
+      },
       where: {
         status: { in: ['Comprado', 'Entregue'] }
       }
     });
     const totalSpent = completedPurchases.reduce(
-      (sum, item) => sum + ((item.finalCost || 0) * item.quantity),
+      (sum, item) => sum + (item.purchaseInvoice?.grossTotal ?? ((item.finalCost || 0) * item.quantity)),
       0,
     );
+    const awaitingInvoiceCount = completedPurchases.filter(item => !item.purchaseInvoice).length;
+    const invoiceDivergenceCount = completedPurchases.filter(item =>
+      item.purchaseInvoice && (Math.abs(item.purchaseInvoice.grossVariance) > 0.01 || Math.abs(item.purchaseInvoice.netVariance) > 0.01),
+    ).length;
+    const invoiceVarianceTotal = completedPurchases.reduce(
+      (sum, item) => sum + Math.abs(item.purchaseInvoice?.grossVariance || 0), 0,
+    );
+    const leadTimes = completedPurchases
+      .map(item => item.quotes[0]?.leadTime)
+      .filter((value): value is number => typeof value === 'number' && value > 0);
+    const averageLeadTime = leadTimes.length
+      ? leadTimes.reduce((sum, value) => sum + value, 0) / leadTimes.length
+      : 0;
 
     // 3. Contagem de requisições pendentes (Ainda não compradas)
     const pendingCount = await this.prisma.requisition.count({
@@ -44,7 +62,11 @@ export class StatsService {
       totalRequests,
       totalSpent,
       pendingCount,
-      completedCount
+      completedCount,
+      awaitingInvoiceCount,
+      invoiceDivergenceCount,
+      invoiceVarianceTotal,
+      averageLeadTime,
     };
   }
 }

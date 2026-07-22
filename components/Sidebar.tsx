@@ -16,7 +16,7 @@ interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, onNewRequest, requisitions, currentUser }) => {
   const pendingCount = requisitions.filter(r => r.status === 'Solicitado' || r.status === 'Cotando').length;
-  const quickPendingCount = requisitions.filter(r => r.purchaseMode === 'QUICK' && r.taxStatus === 'PENDING_INVOICE').length;
+  const quickPendingCount = requisitions.filter(r => r.costReconciliationStatus === 'PENDING_INVOICE').length;
 
   const NavButton = ({ view, icon: Icon, label, badge }: { view: any, icon: any, label: string, badge?: number }) => {
 // ... (rest of NavButton)

@@ -33,13 +33,15 @@ model Fornecedor {
   // Relacionamento: Funcionários vinculados
   users       User[]
 
-  // Configuração Fiscal (se for BUYER)
+  // Premissas comerciais de TCO (se for BUYER)
   taxConfig   TaxConfiguration?
+  tcoAssumptions TcoAssumption[]
 
   @@map("fornecedores")
 }
 
 // Modelo de Configurações Fiscais Globais/Por Comprador
+// Estrutura legada mantida somente para a migração das premissas atuais.
 model TaxConfiguration {
   id                    String   @id @default(uuid())
   icmsCreditPercentage  Float    @default(100.0)
@@ -53,6 +55,22 @@ model TaxConfiguration {
   updatedAt             DateTime @updatedAt
 
   @@map("tax_configurations")
+}
+
+// Premissas comerciais usadas apenas para estimar o TCO de Compras.
+model TcoAssumption {
+  id                String      @id @default(uuid())
+  itemUseType       ItemUseType
+  icmsRecoveryPct   Float       @default(0)
+  ipiRecoveryPct    Float       @default(0)
+  pisRecoveryPct    Float       @default(0)
+  cofinsRecoveryPct Float       @default(0)
+  fornecedorId      String
+  fornecedor        Fornecedor  @relation(fields: [fornecedorId], references: [id], onDelete: Cascade)
+  updatedAt         DateTime    @updatedAt
+
+  @@unique([fornecedorId, itemUseType])
+  @@map("tco_assumptions")
 }
 
 // Modelo de Usuários do Sistema
@@ -87,24 +105,21 @@ model Requisition {
   requester     String   
   notes         String?  
 
-  // Fluxo operacional da compra. Compras QUICK nascem sem apuracao fiscal e
-  // permanecem pendentes ate a chegada da nota do fornecedor.
+  // Fluxo operacional da compra. Compras QUICK permanecem pendentes até a NF.
   purchaseMode  String   @default("STRATEGIC") // STRATEGIC | QUICK
-  taxStatus     String   @default("NOT_STARTED") // NOT_STARTED | PENDING_INVOICE | CALCULATED
-  invoiceNumber String?
-  invoiceAccessKey String?
-  invoiceIssueDate DateTime?
-  taxReviewedAt DateTime?
+  costReconciliationStatus String @default("NOT_REQUIRED")
+  costReconciledAt DateTime?
   
   quotes        Quote[]
+  purchaseInvoice PurchaseInvoice?
   
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  @@index([purchaseMode, taxStatus])
+  @@index([purchaseMode, costReconciliationStatus])
 }
 
-// Modelo de Cotação de Fornecedor (Enriquecido para TCO Fiscal)
+// Cotação do fornecedor enriquecida com dados comerciais para estimativa de TCO.
 model Quote {
   id           String      @id @default(uuid())
   supplierName String      // Nome legível do fornecedor
@@ -114,27 +129,30 @@ model Quote {
   paymentTerms String?     
   isSelected   Boolean     @default(false)
 
-  // --- CAMPOS FISCAIS (FASE 1) ---
+  // --- DADOS INFORMADOS PELO FORNECEDOR ---
   itemUseType  ItemUseType @default(CONSUMPTION)
+  ncm          String?
+  cest         String?
+  cfop         String?
   
   // ICMS
   cstIcms      String?     // CST do ICMS
   csosn        String?     // CSOSN (para Simples Nacional)
   hasIcmsSt    Boolean     @default(false)
-  icmsRate     Float?      @default(0)
-  icmsValue    Float?      @default(0)
+  icmsRate     Float?
+  icmsValue    Float?
   
   // PIS/COFINS
   cstPis       String?
   cstCofins    String?
-  pisRate      Float?      @default(0)
-  cofinsRate   Float?      @default(0)
-  pisValue     Float?      @default(0)
-  cofinsValue  Float?      @default(0)
+  pisRate      Float?
+  cofinsRate   Float?
+  pisValue     Float?
+  cofinsValue  Float?
   
   // IPI
-  ipiRate      Float?      @default(0)
-  ipiValue     Float?      @default(0)
+  ipiRate      Float?
+  ipiValue     Float?
 
   // IBS/CBS (transicao da Reforma Tributaria)
   cstIbsCbs    String?
@@ -144,19 +162,38 @@ model Quote {
   ibsRate      Float?      @default(0)
   ibsValue     Float?      @default(0)
 
-  // PERCENTUAIS DE APROVEITAMENTO ESPECÍFICOS DO ITEM (Sugeridos ou Manuais)
-  utilizationIcms   Float?   @default(100.0)
-  utilizationPis    Float?   @default(100.0)
-  utilizationCofins Float?   @default(100.0)
-  utilizationIpi    Float?   @default(100.0)
+  stRate       Float?
+  stValue      Float?
+  fcpRate      Float?
+  fcpValue     Float?
+  difalRate    Float?
+  difalValue   Float?
+  hasFcp       Boolean     @default(false)
+  hasDifal     Boolean     @default(false)
+  ipiTreatment String      @default("ADDITIONAL")
+  stTreatment  String      @default("ADDITIONAL")
+  fcpTreatment String      @default("ADDITIONAL")
+  difalTreatment String    @default("ADDITIONAL")
 
-  // RESULTADOS DO CÁLCULO (Motor Fiscal)
+  // Ajustes comerciais opcionais da premissa por cotação.
+  utilizationIcms   Float?
+  utilizationPis    Float?
+  utilizationCofins Float?
+  utilizationIpi    Float?
+
+  // RESULTADOS CENTRALIZADOS DO SIMULADOR DE TCO
   creditIcms   Float?      @default(0)
   creditPis    Float?      @default(0)
   creditCofins Float?      @default(0)
   creditIpi    Float?      @default(0)
   netCost      Float?      @default(0) // Custo Líquido Real (TCO - Créditos)
   creditSource String?     @default("MANUAL")
+  grossTotalCost        Float?
+  estimatedCreditTotal Float?
+  estimatedNetTotal    Float?
+  dataCompleteness     String @default("INCOMPLETE")
+  calculationSource    String @default("SUPPLIER_QUOTE")
+  tcoMemory            Json?
   taxMemory    Json?       // Auditoria: Armazena o "porquê" do cálculo em JSON
 
   // Relacionamentos
@@ -165,4 +202,43 @@ model Quote {
   
   requisitionId String
   requisition   Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+}
+
+model PurchaseInvoice {
+  id                        String      @id @default(uuid())
+  requisitionId             String      @unique
+  requisition               Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+  number                    String
+  series                    String?
+  accessKey                 String      @unique
+  issueDate                 DateTime
+  supplierCnpj              String
+  importSource              String
+  productTotal              Float       @default(0)
+  freightTotal              Float       @default(0)
+  discountTotal             Float       @default(0)
+  grossTotal                Float
+  icmsTotal                 Float       @default(0)
+  ipiTotal                  Float       @default(0)
+  pisTotal                  Float       @default(0)
+  cofinsTotal               Float       @default(0)
+  stTotal                   Float       @default(0)
+  fcpTotal                  Float       @default(0)
+  difalTotal                Float       @default(0)
+  cbsTotal                  Float       @default(0)
+  ibsTotal                  Float       @default(0)
+  estimatedRecoverableTotal Float       @default(0)
+  actualNetEstimatedTotal   Float
+  quotedGrossTotal          Float
+  quotedNetEstimatedTotal   Float
+  quotedFreightTotal        Float
+  quotedTaxTotal            Float
+  actualTaxTotal            Float
+  freightVariance           Float
+  taxVariance               Float
+  grossVariance             Float
+  netVariance               Float
+  xmlContent                String?     @db.Text
+  createdAt                 DateTime    @default(now())
+  updatedAt                 DateTime    @updatedAt
 }

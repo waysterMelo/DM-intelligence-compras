@@ -1,405 +1,224 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Requisition, Status, SupplierQuote, Company } from '../types';
-import { StatusBadge, PriorityBadge } from './StatusBadge';
-import { 
-  Play, DollarSign, Ban, Trash2, Trophy, 
-  Calculator, Truck, Receipt, Calendar, CreditCard, 
-  Save, CheckCircle2, X, Building2, TrendingDown, Info,
-  Sparkles, ShieldCheck, PieChart, MousePointer2, Briefcase, Landmark
-} from 'lucide-react';
-import { CurrencyInput } from './CurrencyInput';
+import React, { useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, CheckCircle2, Clock3, CreditCard, Save, ShoppingCart, Trash2, Truck, X } from 'lucide-react';
+import { Company, CostTreatment, ItemUseType, Requisition, Status, SupplierQuote } from '../types';
+import { PriorityBadge, StatusBadge } from './StatusBadge';
 
 interface PurchasingHubProps {
   requisitions: Requisition[];
-  onUpdateStatus: (id: string, status: Status, finalCost?: number, paymentTerms?: string) => void;
-  onUpdateQuotes: (id: string, quotes: SupplierQuote[]) => void;
-  onDelete: (id: string) => void;
+  onUpdateStatus: (id: string, status: Status, finalCost?: number, paymentTerms?: string) => Promise<void>;
+  onUpdateQuotes: (id: string, quotes: SupplierQuote[]) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+const money = (value?: number | null) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
+const uses: Array<{ value: ItemUseType; label: string }> = [
+  { value: 'INDUSTRIAL_INPUT', label: 'Insumo industrial' },
+  { value: 'RESALE', label: 'Revenda' },
+  { value: 'FIXED_ASSET', label: 'Ativo' },
+  { value: 'CONSUMPTION', label: 'Uso / consumo' },
+];
+
+const blankQuote = (reqId: string, index: number): SupplierQuote => ({
+  id: `draft-${reqId}-${index}`,
+  supplierName: '',
+  price: 0,
+  freight: 0,
+  leadTime: 0,
+  paymentTerms: '',
+  isSelected: false,
+  itemUseType: 'INDUSTRIAL_INPUT',
+  ipiTreatment: 'ADDITIONAL',
+  stTreatment: 'ADDITIONAL',
+  fcpTreatment: 'ADDITIONAL',
+  difalTreatment: 'ADDITIONAL',
+});
+
+const NumberField = ({ label, value, onChange, suffix }: { label: string; value?: number; onChange: (value?: number) => void; suffix?: string }) => (
+  <label className="block">
+    <span className="block text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1">{label}</span>
+    <div className="relative">
+      <input type="number" min="0" step="0.01" value={value ?? ''} onChange={event => onChange(event.target.value === '' ? undefined : Number(event.target.value))} className="w-full rounded-xl bg-slate-50 px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500" />
+      {suffix && <span className="absolute right-3 top-2 text-xs text-slate-400">{suffix}</span>}
+    </div>
+  </label>
+);
 
 export const PurchasingHub: React.FC<PurchasingHubProps> = ({ requisitions, onUpdateStatus, onUpdateQuotes, onDelete }) => {
   const [selectedReqId, setSelectedReqId] = useState<string | null>(null);
-  const [activeSuppIdx, setActiveSuppIdx] = useState(0);
-  const [localQuotes, setLocalQuotes] = useState<Record<string, SupplierQuote[]>>({});
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [drafts, setDrafts] = useState<Record<string, SupplierQuote[]>>({});
   const [suppliers, setSuppliers] = useState<Company[]>([]);
-  const [buyer, setBuyer] = useState<Company | null>(null);
-  const [showSavingModal, setShowSavingModal] = useState<boolean>(false);
-  const [negotiatedPrice, setNegotiatedPrice] = useState<number>(0);
-  
-  // Filtros e Paginação da Fila
   const [statusFilter, setStatusFilter] = useState<Status | 'Pendentes'>('Pendentes');
-  const [page, setPage] = useState(0);
-  const ITEMS_PER_PAGE = 4;
-
-  const filteredQueue = requisitions.filter(r => {
-    if (r.purchaseMode === 'QUICK') return false;
-    if (statusFilter === 'Pendentes') return r.status === 'Solicitado' || r.status === 'Cotando';
-    return r.status === statusFilter;
-  });
-
-  const totalPages = Math.ceil(filteredQueue.length / ITEMS_PER_PAGE);
-  const displayedItems = filteredQueue.slice(page * ITEMS_PER_PAGE, (page + 1) * ITEMS_PER_PAGE);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [showPurchase, setShowPurchase] = useState(false);
+  const [negotiatedPrice, setNegotiatedPrice] = useState('');
 
   useEffect(() => {
-    fetchInitialData();
+    fetch(`${API_BASE_URL}/companies/suppliers`).then(response => response.ok ? response.json() : []).then(setSuppliers).catch(() => setSuppliers([]));
   }, []);
 
   useEffect(() => {
-     setPage(0);
-  }, [statusFilter]);
-
-  // Removida a seleção automática do primeiro item para cumprir o requisito #1
-  useEffect(() => {
-    const initialMap: Record<string, SupplierQuote[]> = {};
+    const next: Record<string, SupplierQuote[]> = {};
     requisitions.forEach(req => {
-      const qts = [...(req.quotes || [])];
-      while (qts.length < 3) {
-        qts.push({ 
-          id: Math.random().toString(), supplierName: '', price: 0, freight: 0, 
-          ipiRate: 0, icmsRate: 0, pisRate: 0, cofinsRate: 0, 
-          leadTime: 0, paymentTerms: '', isSelected: false 
-        });
-      }
-      initialMap[req.id] = qts;
+      const quotes = (req.quotes || []).map(quote => ({ ...quote }));
+      while (quotes.length < 3) quotes.push(blankQuote(req.id, quotes.length));
+      next[req.id] = quotes;
     });
-    setLocalQuotes(initialMap);
+    setDrafts(next);
   }, [requisitions]);
 
-  const fetchInitialData = async () => {
-    try {
-      const [suppRes, buyerRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/companies/suppliers`),
-        fetch(`${API_BASE_URL}/companies/buyer`)
-      ]);
+  const queue = useMemo(() => requisitions.filter(req => req.purchaseMode !== 'QUICK' && (
+    statusFilter === 'Pendentes' ? ['Solicitado', 'Cotando'].includes(req.status) : req.status === statusFilter
+  )), [requisitions, statusFilter]);
+  const selected = requisitions.find(req => req.id === selectedReqId);
+  const quotes = drafts[selectedReqId || ''] || [];
+  const active = quotes[activeIndex];
+  const persistedQuotes = selected?.quotes || [];
+  const comparison = [...persistedQuotes].sort((a, b) => (a.estimatedNetTotal ?? Number.MAX_SAFE_INTEGER) - (b.estimatedNetTotal ?? Number.MAX_SAFE_INTEGER));
+  const mismatched = comparison.length > 1 && new Set(comparison.map(quote => quote.itemUseType)).size > 1;
+  const incomplete = comparison.some(quote => quote.dataCompleteness !== 'COMPLETE');
+  const winner = quotes.find(quote => quote.isSelected);
 
-      if (suppRes.ok) {
-          const data = await suppRes.json().catch(() => []);
-          setSuppliers(data);
-      }
-      
-      if (buyerRes.ok) {
-          const data = await buyerRes.json().catch(() => null);
-          setBuyer(data);
-      }
-    } catch (e) { console.error('Error fetching initial data:', e); }
-  };
-
-  const persistChanges = (reqId: string, quotes: SupplierQuote[]) => {
-    onUpdateQuotes(reqId, quotes);
-  };
-
-  const handleLocalUpdate = (reqId: string, idx: number, field: keyof SupplierQuote, value: any) => {
-    setLocalQuotes(prev => {
-      const newQuotes = [...(prev[reqId] || [])];
-      newQuotes[idx] = { ...newQuotes[idx], [field]: value };
-      
-      // Persistência imediata para campos críticos (Selects)
-      if (field === 'companyId' || field === 'itemUseType') {
-        if (field === 'companyId') {
-          const selected = suppliers.find(s => s.id === value);
-          if (selected) newQuotes[idx].supplierName = selected.name;
-        }
-        persistChanges(reqId, newQuotes);
-      }
-      return { ...prev, [reqId]: newQuotes };
+  const update = <K extends keyof SupplierQuote>(field: K, value: SupplierQuote[K]) => {
+    if (!selectedReqId) return;
+    setDrafts(current => {
+      const next = [...(current[selectedReqId] || [])];
+      const quote = { ...next[activeIndex], [field]: value };
+      if (field === 'companyId') quote.supplierName = suppliers.find(item => item.id === value)?.name || '';
+      next[activeIndex] = quote;
+      return { ...current, [selectedReqId]: next };
     });
   };
 
-  const calculateTco = (req: Requisition, quote: SupplierQuote) => {
-    const base = quote.price || 0;
-    const freight = (quote.freight || 0) / (req.quantity || 1);
-    const ipi = base * ((quote.ipiRate || 0)/100);
-    // ICMS sempre calculado (nominal), mas o crédito depende do regime (backend resolve o crédito real)
-    const icms = base * ((quote.icmsRate || 0)/100);
-    const pis = base * ((quote.pisRate || 0)/100);
-    const cofins = base * ((quote.cofinsRate || 0)/100);
-    
-    // Custo Bruto (Saída de Caixa): Preço + Frete + IPI (ICMS/PIS/COFINS já estão no preço base no padrão BR)
-    const gross = base + freight + ipi;
-    
-    // Se for Uso e Consumo, não gera crédito nenhum
-    if (isConsumption) {
-       return { gross, net: gross, credits: 0 };
-    }
-
-    // Créditos Estimados
-    let credits = 0;
-    
-    // 1. ICMS: Lucro Real ou Presumido (exceto Simples)
-    if (buyer?.taxRegime === 'REAL' || buyer?.taxRegime === 'PRESUMIDO') {
-       credits += icms;
-    }
-
-    // PIS/COFINS: fornecedor do Simples não impede crédito por si só (ADI RFB 15/2007).
-    if (buyer?.taxRegime === 'REAL') {
-       credits += pis + cofins;
-    }
-    
-    return { gross, net: gross - credits, credits };
+  const selectWinner = (index: number) => {
+    if (!selectedReqId) return;
+    setDrafts(current => ({
+      ...current,
+      [selectedReqId]: current[selectedReqId].map((quote, quoteIndex) => ({ ...quote, isSelected: quoteIndex === index })),
+    }));
   };
 
-  const formatCurrency = (val: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
+  const saveQuotes = async () => {
+    if (!selected) return;
+    const valid = quotes.filter(quote => quote.companyId && quote.price >= 0);
+    if (!valid.length) return setMessage('Cadastre ao menos uma cotação com fornecedor.');
+    setSaving(true);
+    setMessage(null);
+    try {
+      await onUpdateQuotes(selected.id, valid);
+      setMessage('Cotações calculadas e salvas pelo Simulador de TCO.');
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Erro ao salvar as cotações.');
+    } finally {
+      setSaving(false);
+    }
+  };
 
-  const selectedReq = requisitions.find(r => r.id === selectedReqId);
-  const activeQuotes = localQuotes[selectedReqId || ''] || [];
-  const activeQuote = activeQuotes[activeSuppIdx];
-  const winner = activeQuotes.find(q => q.isSelected);
-
-  const activeSupplier = suppliers.find(s => s.id === activeQuote?.companyId);
-  const isSimplesSupplier = activeSupplier?.taxRegime === 'SIMPLES';
-  
-  const currentUseType = activeQuote?.itemUseType || selectedReq?.itemUseType || 'INDUSTRIAL_INPUT';
-  const isConsumption = currentUseType === 'CONSUMPTION';
+  const finishPurchase = async () => {
+    if (!selected || !winner) return;
+    const finalUnitPrice = Number(negotiatedPrice || winner.price);
+    setSaving(true);
+    try {
+      await onUpdateQuotes(selected.id, quotes.filter(quote => quote.companyId));
+      await onUpdateStatus(selected.id, 'Comprado', finalUnitPrice, winner.paymentTerms);
+      setShowPurchase(false);
+      setSelectedReqId(null);
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Erro ao concluir a compra.');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
-    <div className="flex flex-col h-full gap-6 animate-in fade-in duration-700">
-      
-      {/* 1. FILA DE TRABALHO HORIZONTAL */}
-      <div className="flex flex-col gap-3">
-         <div className="flex items-center justify-between px-2">
-            <div className="flex items-center gap-4">
-              <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
-                 <Sparkles className="w-4 h-4 text-amber-500" /> Fila de Suprimentos
-              </h3>
-              <select 
-                 value={statusFilter} 
-                 onChange={(e) => setStatusFilter(e.target.value as any)}
-                 className="bg-slate-100 text-[10px] font-bold uppercase tracking-wider text-slate-600 px-2 py-1 rounded-lg border-none outline-none cursor-pointer"
-              >
-                 <option value="Pendentes">Pendentes (Ação)</option>
-                 <option value="Aprovado">Aprovados</option>
-                 <option value="Comprado">Comprados</option>
-                 <option value="Rejeitado">Suspensos</option>
-              </select>
-            </div>
-            
-            <div className="flex items-center gap-2">
-               <span className="bg-slate-200 text-slate-600 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-tighter mr-2">
-                  {filteredQueue.length} Itens
-               </span>
-               <button 
-                 disabled={page === 0}
-                 onClick={() => setPage(p => Math.max(0, p - 1))}
-                 className="p-1 rounded-full hover:bg-slate-100 disabled:opacity-30 transition-colors"
-               >
-                 <Briefcase className="w-4 h-4 rotate-180" /> {/* Using generic icon as placeholder for arrow if needed, but standard arrow is better */}
-                 {/* Reusing existing icons to avoid import errors, assuming ChevronLeft/Right not imported yet. Adding them now if needed or using text */}
-                 <span className="text-xs font-bold">←</span>
-               </button>
-               <button 
-                 disabled={page >= totalPages - 1}
-                 onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
-                 className="p-1 rounded-full hover:bg-slate-100 disabled:opacity-30 transition-colors"
-               >
-                 <span className="text-xs font-bold">→</span>
-               </button>
-            </div>
-         </div>
-         <div className="flex gap-4 overflow-x-auto pb-4 px-2 no-scrollbar scroll-smooth min-h-[220px]">
-            {displayedItems.length === 0 ? (
-               <div className="w-full bg-white/50 border-2 border-dashed border-slate-200 rounded-[2rem] p-8 text-center text-slate-400 flex flex-col items-center justify-center">
-                  <p className="text-sm font-bold italic">Nenhum item nesta visualização.</p>
-               </div>
-            ) : (
-               displayedItems.map(req => (
-                  <button
-                     key={req.id}
-                     onClick={() => { setSelectedReqId(req.id); setActiveSuppIdx(0); }}
-                     className={`flex-shrink-0 w-72 p-6 rounded-[2.5rem] border-2 transition-all duration-500 text-left relative overflow-hidden group ${selectedReqId === req.id ? 'bg-slate-900 border-slate-900 text-white shadow-2xl shadow-slate-300 -translate-y-1' : 'bg-white border-white text-slate-500 hover:border-blue-100 hover:shadow-lg shadow-soft'}`}
-                  >
-                     <div className="flex justify-between items-start mb-3">
-                        <span className={`text-[10px] font-black uppercase tracking-widest ${selectedReqId === req.id ? 'text-slate-500' : 'text-slate-300'}`}>{req.id}</span>
-                        <PriorityBadge priority={req.priority} />
-                     </div>
-                     <h4 className="font-black text-base leading-tight mb-4 h-10 overflow-hidden line-clamp-2">{req.name}</h4>
-                     <div className="flex items-center justify-between mt-auto pt-4 border-t border-white/5">
-                        <span className="text-[10px] font-bold opacity-60 uppercase tracking-widest">{req.department}</span>
-                        <span className={`text-sm font-black ${selectedReqId === req.id ? 'text-blue-400' : 'text-slate-900'}`}>{req.quantity} {req.unit}</span>
-                     </div>
-                     {selectedReqId === req.id && <div className="absolute top-0 left-0 w-1.5 h-full bg-blue-500"></div>}
-                  </button>
-               ))
-            )}
-         </div>
-      </div>
+    <div className="grid grid-cols-1 xl:grid-cols-[340px,1fr] gap-6 pb-12">
+      <aside className="bg-white rounded-[2rem] border border-slate-100 shadow-soft p-5 h-fit">
+        <div className="flex items-center justify-between mb-4">
+          <div><h2 className="font-black text-slate-900">Fila de Compras</h2><p className="text-xs text-slate-400">{queue.length} itens</p></div>
+          <select value={statusFilter} onChange={event => setStatusFilter(event.target.value as Status | 'Pendentes')} className="rounded-xl bg-slate-50 p-2 text-xs font-bold">
+            <option>Pendentes</option><option>Solicitado</option><option>Cotando</option><option>Aprovado</option><option>Comprado</option>
+          </select>
+        </div>
+        <div className="space-y-3">
+          {queue.map(req => (
+            <button key={req.id} onClick={() => { setSelectedReqId(req.id); setActiveIndex(0); setMessage(null); }} className={`w-full text-left rounded-2xl border p-4 transition ${selectedReqId === req.id ? 'border-blue-500 bg-blue-50' : 'border-slate-100 hover:border-blue-200'}`}>
+              <div className="flex justify-between gap-2"><span className="font-black text-sm text-slate-800 line-clamp-2">{req.name}</span><PriorityBadge priority={req.priority} /></div>
+              <div className="mt-3 flex justify-between items-center text-xs text-slate-500"><span>{req.quantity} {req.unit}</span><StatusBadge status={req.status} /></div>
+            </button>
+          ))}
+          {!queue.length && <p className="text-center py-12 text-sm text-slate-400">Nenhum item nesta fila.</p>}
+        </div>
+      </aside>
 
-      {/* 2. ÁREA DE NEGOCIAÇÃO OU PLACEHOLDER */}
-      {selectedReq ? (
-         <div className="flex-1 bg-slate-100/80 rounded-[4rem] p-4 lg:p-8 flex flex-col xl:flex-row gap-8 shadow-inner border border-white animate-in slide-in-from-bottom-4 duration-700">
-            {/* Esquerda: Info Card */}
-            <div className="xl:w-80 flex flex-col gap-6">
-               <div className="bg-white p-8 rounded-[3.5rem] shadow-soft border border-slate-50 flex flex-col gap-6">
-                  <div className="flex justify-between items-start">
-                     <StatusBadge status={selectedReq.status} />
-                     <button onClick={() => onDelete(selectedReq.id)} className="p-3 bg-slate-50 text-slate-300 hover:text-rose-500 rounded-2xl transition-all"><Trash2 className="w-5 h-5" /></button>
-                  </div>
-                  <div>
-                     <p className="text-[10px] font-black text-blue-600 uppercase tracking-[0.2em] mb-2">Requisição Ativa</p>
-                     <h2 className="text-2xl font-black text-slate-900 leading-tight tracking-tighter">{selectedReq.name}</h2>
-                     <div className="space-y-1 mt-4">
-                        <p className="text-xs font-bold text-slate-500 flex items-center gap-2"><Briefcase className="w-3.5 h-3.5" /> {selectedReq.department}</p>
-                        <p className="text-xs font-bold text-slate-500 flex items-center gap-2"><Landmark className="w-3.5 h-3.5" /> {selectedReq.requester}</p>
-                     </div>
-                  </div>
-                  <button onClick={() => onUpdateStatus(selectedReq.id, 'Rejeitado')} className="w-full flex items-center justify-center gap-3 py-5 border-2 border-slate-100 text-slate-400 font-black text-[10px] uppercase tracking-widest rounded-3xl hover:bg-rose-50 hover:text-rose-600 hover:border-rose-100 transition-all"><Ban className="w-4 h-4" /> Suspender Operação</button>
-               </div>
-
-               {buyer && (
-                 <div className="bg-gradient-to-br from-blue-600 to-indigo-700 p-8 rounded-[3.5rem] text-white shadow-2xl shadow-blue-200 flex flex-col gap-4 relative overflow-hidden group">
-                    <ShieldCheck className="absolute top-0 right-0 p-4 w-24 h-24 opacity-20 transform translate-x-4 -translate-y-4 group-hover:scale-110 transition-transform" />
-                    <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-70">Contexto Fiscal RA Polymers</p>
-                    <h4 className="text-2xl font-black uppercase tracking-tighter">{buyer.taxRegime}</h4>
-                    <p className="text-[11px] font-bold leading-relaxed opacity-80">Configurado para captura automática de créditos em insumos industriais.</p>
-                 </div>
-               )}
-            </div>
-
-            {/* Direita: Negotiation Board */}
-            <div className="flex-1 flex flex-col gap-6" onBlur={() => persistChanges(selectedReq.id, activeQuotes)}>
-               <div className="flex gap-3 bg-white/60 backdrop-blur-xl p-2.5 rounded-[3rem] shadow-sm border border-white">
-                  {[0, 1, 2].map(idx => {
-                    const q = activeQuotes[idx];
-                    const active = activeSuppIdx === idx;
-                    const colors = ['from-blue-500 to-blue-600 shadow-blue-200', 'from-indigo-500 to-indigo-600 shadow-indigo-200', 'from-violet-500 to-violet-600 shadow-violet-200'];
-                    return (
-                      <button key={idx} onClick={() => { persistChanges(selectedReq.id, activeQuotes); setActiveSuppIdx(idx); }} className={`flex-1 py-5 px-6 rounded-[2.5rem] flex items-center justify-center gap-3 transition-all duration-500 ${active ? `bg-gradient-to-tr ${colors[idx]} text-white shadow-2xl scale-[1.02]` : 'bg-white/50 text-slate-400 hover:bg-white hover:text-slate-600'}`}>
-                         <Building2 className={`w-4 h-4 ${active ? 'opacity-100' : 'opacity-30'}`} />
-                         <span className="text-[10px] font-black uppercase tracking-[0.15em]">{q?.supplierName ? q.supplierName.substring(0, 12) : `OPÇÃO ${idx + 1}`}</span>
-                         {q?.isSelected && <Trophy className="w-4 h-4 text-amber-300 animate-pulse" />}
-                      </button>
-                    );
-                  })}
-               </div>
-
-               <div className="bg-white rounded-[4rem] p-10 lg:p-14 shadow-soft border border-slate-50 flex flex-col gap-10 animate-in zoom-in-95 duration-700">
-                  <div className="flex flex-col lg:flex-row gap-12">
-                     <div className="flex-1 space-y-8">
-                        <div>
-                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2 mb-3 block">Destinação da Mercadoria</label>
-                           <select 
-                              className="w-full bg-slate-50 border-2 border-slate-100 px-8 py-5 rounded-3xl text-sm font-black text-slate-700 focus:bg-white focus:border-blue-500 outline-none transition-all cursor-pointer shadow-inner mb-4" 
-                              value={currentUseType} 
-                              onChange={(e) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'itemUseType', e.target.value)}
-                           >
-                              <option value="INDUSTRIAL_INPUT">Matéria-prima / Industrialização</option>
-                              <option value="CONSUMPTION">Material de Uso e Consumo</option>
-                              <option value="RESALE">Revenda</option>
-                              <option value="FIXED_ASSET">Ativo Imobilizado</option>
-                           </select>
-
-                           <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2 mb-3 block">Fornecedor Selecionado</label>
-                           <select className="w-full bg-slate-50 border-2 border-slate-100 px-8 py-5 rounded-3xl text-sm font-black text-slate-700 focus:bg-white focus:border-blue-500 outline-none transition-all cursor-pointer shadow-inner" value={activeQuote?.companyId || ''} onChange={(e) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'companyId', e.target.value)}>
-                              <option value="">Selecione um parceiro...</option>
-                              {suppliers.map(s => <option key={s.id} value={s.id}>{s.name} • {s.taxRegime}</option>)}
-                           </select>
-                        </div>
-                        <div className="grid grid-cols-2 gap-8">
-                           <CurrencyInput label="Preço Unitário" value={activeQuote?.price || 0} onChange={(v) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'price', v)} icon={<DollarSign className="w-3.5 h-3.5"/>} />
-                           <CurrencyInput label="Frete Total" value={activeQuote?.freight || 0} onChange={(v) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'freight', v)} icon={<Truck className="w-3.5 h-3.5"/>} color="indigo" />
-                        </div>
-                        <div className="grid grid-cols-2 gap-8">
-                           <div className="flex flex-col gap-2"><label className="text-[10px] font-black text-slate-400 uppercase ml-2 flex items-center gap-2"><Calendar className="w-3.5 h-3.5"/> Prazo (Dias)</label><input type="number" className="w-full bg-slate-50 border-2 border-slate-100 focus:bg-white focus:border-blue-500 rounded-3xl px-8 py-4 text-sm font-black text-slate-700 outline-none transition-all shadow-inner" value={activeQuote?.leadTime || 0} onChange={(e) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'leadTime', parseInt(e.target.value) || 0)} /></div>
-                           <div className="flex flex-col gap-2"><label className="text-[10px] font-black text-slate-400 uppercase ml-2 flex items-center gap-2"><CreditCard className="w-3.5 h-3.5"/> Condição Pagto</label><input type="text" placeholder="Ex: 28dd" className="w-full bg-slate-50 border-2 border-slate-100 focus:bg-white focus:border-blue-500 rounded-3xl px-8 py-4 text-sm font-black text-slate-700 outline-none transition-all shadow-inner" value={activeQuote?.paymentTerms || ''} onChange={(e) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'paymentTerms', e.target.value)} /></div>
-                        </div>
-                     </div>
-                     <div className="flex-1 space-y-8">
-                        <p className="text-[10px] font-black text-amber-600 uppercase tracking-[0.2em] flex items-center gap-2 mb-2 px-2"><Receipt className="w-4 h-4" /> Componentes Tributários (%)</p>
-                        
-                        <div className={`transition-all duration-500 ${isConsumption ? 'opacity-40 pointer-events-none grayscale' : ''}`}>
-                            <div className="grid grid-cols-2 gap-8 mb-8">
-                               <CurrencyInput label="IPI (%)" prefix="" value={isConsumption ? 0 : (activeQuote?.ipiRate || 0)} onChange={(v) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'ipiRate', v)} color="amber" />
-                               <CurrencyInput label="ICMS (%)" prefix="" value={isConsumption ? 0 : (activeQuote?.icmsRate || 0)} onChange={(v) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'icmsRate', v)} color="amber" />
-                            </div>
-                            <div className="grid grid-cols-2 gap-8 relative">
-                               <div>
-                                  <CurrencyInput label="PIS (%)" prefix="" value={isConsumption ? 0 : (activeQuote?.pisRate || 0)} onChange={(v) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'pisRate', v)} color="amber" />
-                               </div>
-                               <div>
-                                  <CurrencyInput label="COFINS (%)" prefix="" value={isConsumption ? 0 : (activeQuote?.cofinsRate || 0)} onChange={(v) => handleLocalUpdate(selectedReq.id, activeSuppIdx, 'cofinsRate', v)} color="amber" />
-                               </div>
-                               
-                               {isSimplesSupplier && !isConsumption && <p className="col-span-2 mt-2 text-[9px] font-bold text-amber-700">Fornecedor do Simples: confirme na NF os valores e limites de crédito aplicáveis.</p>}
-                            </div>
-                        </div>
-
-                        {isConsumption && (
-                           <div className="bg-slate-100 text-slate-500 text-xs font-bold p-4 rounded-2xl border border-slate-200 flex items-center gap-3">
-                              <Ban className="w-5 h-5 text-slate-400" />
-                              <p>Material de <span className="text-slate-700 font-black">Uso e Consumo</span> não gera crédito tributário.</p>
-                           </div>
-                        )}
-                        <div className="bg-amber-50/50 p-6 rounded-[2.5rem] border border-amber-100/50 text-[10px] font-bold text-amber-800/70 flex items-center gap-4 italic leading-relaxed">
-                           <Info className="w-6 h-6 flex-shrink-0 text-amber-500" />
-                           O Motor Fiscal processa os créditos automaticamente com base no perfil do comprador {buyer?.name || 'RA Polymers'}.
-                        </div>
-                     </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-12 border-t border-slate-50">
-                     <div className="bg-slate-900 p-10 rounded-[3.5rem] text-white flex flex-col items-center justify-center relative overflow-hidden group shadow-2xl shadow-slate-300">
-                        <p className="text-[10px] font-black uppercase tracking-[0.3em] mb-2 opacity-50">Custo Bruto Unitário</p>
-                        <p className="text-4xl font-black tracking-tighter">{formatCurrency(calculateTco(selectedReq, activeQuote).gross)}</p>
-                     </div>
-                     <div className="bg-emerald-600 p-10 rounded-[3.5rem] text-white flex flex-col items-center justify-center relative overflow-hidden group shadow-2xl shadow-emerald-200 border-b-8 border-emerald-700">
-                        <p className="text-[10px] font-black uppercase tracking-[0.3em] mb-2 opacity-70">Custo Líquido (Net Cost)</p>
-                        <p className="text-5xl font-black tracking-tighter">{formatCurrency(calculateTco(selectedReq, activeQuote).net)}</p>
-                        <button onClick={() => { handleLocalUpdate(selectedReq.id, activeSuppIdx, 'isSelected', true); setNegotiatedPrice(activeQuote.price); setShowSavingModal(true); }} disabled={!activeQuote?.companyId || !activeQuote?.price} className={`mt-10 w-full py-5 rounded-[2rem] font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 transition-all ${activeQuote?.isSelected ? 'bg-amber-400 text-slate-900 shadow-xl' : 'bg-white text-emerald-700 hover:scale-[1.02] active:scale-95 disabled:opacity-50'}`}><Trophy className="w-5 h-5" /> {activeQuote?.isSelected ? 'Vencedor Confirmado' : 'Eleger Melhor TCO'}</button>
-                     </div>
-                  </div>
-               </div>
-            </div>
-         </div>
+      {!selected ? (
+        <section className="bg-white rounded-[2rem] border border-dashed border-slate-200 min-h-[560px] flex items-center justify-center text-center p-8">
+          <div><ShoppingCart className="w-12 h-12 mx-auto text-slate-200 mb-3" /><h2 className="font-black text-slate-700">Selecione uma requisição</h2><p className="text-sm text-slate-400">Cadastre as propostas e compare pelo TCO estimado.</p></div>
+        </section>
       ) : (
-         <div className="flex-1 flex flex-col items-center justify-center py-32 animate-in fade-in zoom-in-95 duration-1000">
-            <div className="w-32 h-32 bg-white rounded-[3.5rem] shadow-soft flex items-center justify-center mb-8 relative border border-slate-50 group">
-               <div className="absolute inset-0 bg-blue-500/5 rounded-[3.5rem] animate-ping opacity-20"></div>
-               <MousePointer2 className="w-12 h-12 text-blue-600 group-hover:scale-110 transition-transform duration-500" />
+        <section className="space-y-5 min-w-0">
+          <div className="bg-white rounded-[2rem] p-6 border border-slate-100 flex flex-wrap justify-between gap-4">
+            <div><p className="text-xs uppercase tracking-widest font-bold text-blue-600">Simulador de TCO</p><h2 className="text-2xl font-black text-slate-900 mt-1">{selected.name}</h2><p className="text-sm text-slate-500">{selected.quantity} {selected.unit} · {selected.department}</p></div>
+            <button onClick={() => onDelete(selected.id)} className="self-start p-3 rounded-xl text-slate-300 hover:bg-rose-50 hover:text-rose-500" aria-label="Excluir"><Trash2 className="w-5 h-5" /></button>
+          </div>
+
+          {comparison.length > 0 && (
+            <div className="bg-white rounded-[2rem] border border-slate-100 overflow-hidden">
+              <div className="p-5 border-b border-slate-100 flex flex-wrap justify-between gap-3"><div><h3 className="font-black text-slate-800">Comparação de fornecedores</h3><p className="text-xs text-slate-400">Ordenação inicial pelo menor TCO; a decisão permanece com o comprador.</p></div>{(mismatched || incomplete) && <span className="inline-flex items-center gap-2 text-xs font-bold text-amber-700 bg-amber-50 px-3 py-2 rounded-xl"><AlertTriangle className="w-4 h-4" />Condições não totalmente comparáveis</span>}</div>
+              <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500"><tr><th className="p-3 text-left">Fornecedor</th><th className="p-3 text-right">Preço / frete</th><th className="p-3 text-right">Tributos informados</th><th className="p-3 text-right">Custo bruto</th><th className="p-3 text-right">Recuperação estimada</th><th className="p-3 text-right">TCO estimado</th><th className="p-3 text-left">Prazo / pagamento</th><th className="p-3">Dados</th></tr></thead>
+                <tbody className="divide-y divide-slate-100">{comparison.map(quote => {
+                  const memory = quote.tcoMemory as any;
+                  const informedTaxes = ['icms', 'ipi', 'pis', 'cofins', 'st', 'fcp', 'difal'].reduce((sum, tax) => sum + Number(memory?.resolvedTaxes?.[tax]?.amount || 0), 0) * selected.quantity;
+                  return <tr key={quote.id} className={quote.isSelected ? 'bg-emerald-50/50' : ''}><td className="p-3 font-bold">{quote.supplierName}</td><td className="p-3 text-right"><p>{money(quote.price)} / un.</p><p className="text-xs text-slate-400"><Truck className="w-3 h-3 inline mr-1" />{money(quote.freight)}</p></td><td className="p-3 text-right">{money(informedTaxes)}</td><td className="p-3 text-right">{money(quote.grossTotalCost)}</td><td className="p-3 text-right text-emerald-600">{money(quote.estimatedCreditTotal)}</td><td className="p-3 text-right font-black text-blue-700">{money(quote.estimatedNetTotal)}</td><td className="p-3"><div className="flex items-center gap-1"><Clock3 className="w-3 h-3" />{quote.leadTime || 0} dias</div><div className="flex items-center gap-1 text-xs text-slate-400"><CreditCard className="w-3 h-3" />{quote.paymentTerms || 'Não informado'}</div></td><td className="p-3 text-center">{quote.dataCompleteness === 'COMPLETE' ? <CheckCircle2 className="w-5 h-5 text-emerald-500 inline" /> : <span className="text-[10px] font-black text-amber-700">INCOMPLETA</span>}</td></tr>;
+                })}</tbody></table></div>
             </div>
-            <h3 className="font-black text-slate-800 text-3xl tracking-tighter uppercase">Inicie sua Negociação</h3>
-            <p className="text-slate-400 font-bold mt-2 tracking-wide uppercase text-[10px]">Selecione um item na fila de suprimentos acima para abrir o board.</p>
-            <div className="mt-12 flex gap-4">
-               <div className="px-6 py-3 bg-white rounded-2xl shadow-sm border border-slate-100 flex items-center gap-3">
-                  <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
-                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Motor Fiscal Pronto</span>
-               </div>
-               <div className="px-6 py-3 bg-white rounded-2xl shadow-sm border border-slate-100 flex items-center gap-3">
-                  <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Conexão Segura</span>
-               </div>
+          )}
+
+          <div className="bg-white rounded-[2rem] border border-slate-100 p-6">
+            <div className="flex flex-wrap gap-2 mb-6">
+              {quotes.map((quote, index) => <button key={quote.id} onClick={() => setActiveIndex(index)} className={`px-4 py-2 rounded-xl text-xs font-black ${activeIndex === index ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500'}`}>Fornecedor {index + 1}{quote.isSelected ? ' · escolhido' : ''}</button>)}
             </div>
-         </div>
+            {active && <div className="space-y-6">
+              <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <label className="lg:col-span-2"><span className="block text-[10px] font-black uppercase text-slate-400 mb-1">Fornecedor</span><select value={active.companyId || ''} onChange={event => update('companyId', event.target.value)} className="w-full rounded-xl bg-slate-50 px-3 py-2 text-sm font-bold"><option value="">Selecione</option>{suppliers.map(supplier => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}</select></label>
+                <NumberField label="Preço unitário" value={active.price} onChange={value => update('price', value || 0)} />
+                <NumberField label="Frete total" value={active.freight} onChange={value => update('freight', value)} />
+                <NumberField label="Prazo" value={active.leadTime} onChange={value => update('leadTime', value)} suffix="dias" />
+                <label><span className="block text-[10px] font-black uppercase text-slate-400 mb-1">Pagamento</span><input value={active.paymentTerms || ''} onChange={event => update('paymentTerms', event.target.value)} className="w-full rounded-xl bg-slate-50 px-3 py-2 text-sm font-bold" /></label>
+                <label><span className="block text-[10px] font-black uppercase text-slate-400 mb-1">Destinação</span><select value={active.itemUseType} onChange={event => update('itemUseType', event.target.value as ItemUseType)} className="w-full rounded-xl bg-slate-50 px-3 py-2 text-sm font-bold">{uses.map(use => <option key={use.value} value={use.value}>{use.label}</option>)}</select></label>
+                <label><span className="block text-[10px] font-black uppercase text-slate-400 mb-1">NCM opcional</span><input value={active.ncm || ''} onChange={event => update('ncm', event.target.value)} className="w-full rounded-xl bg-slate-50 px-3 py-2 text-sm font-bold" /></label>
+              </div>
+
+              <div><h4 className="font-black text-slate-800">Tributos informados pelo fornecedor</h4><p className="text-xs text-slate-400 mt-1">Informe o valor monetário sempre que disponível; ele prevalece sobre a alíquota.</p></div>
+              <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4">
+                {[['ICMS', 'icms'], ['IPI', 'ipi'], ['PIS', 'pis'], ['Cofins', 'cofins']].map(([label, key]) => <div key={key} className="p-4 rounded-2xl border border-slate-100"><p className="font-black text-sm mb-3">{label}</p><div className="grid grid-cols-2 gap-2"><NumberField label="Alíquota" value={active[`${key}Rate` as keyof SupplierQuote] as number | undefined} onChange={value => update(`${key}Rate` as keyof SupplierQuote, value as never)} suffix="%" /><NumberField label="Valor unit." value={active[`${key}Value` as keyof SupplierQuote] as number | undefined} onChange={value => update(`${key}Value` as keyof SupplierQuote, value as never)} /></div></div>)}
+              </div>
+              <div className="grid md:grid-cols-3 gap-4">
+                <label><span className="block text-[10px] font-black uppercase text-slate-400 mb-1">CEST (referência)</span><input value={active.cest || ''} onChange={event => update('cest', event.target.value)} className="w-full rounded-xl bg-slate-50 px-3 py-2 text-sm font-bold" /></label>
+                <label><span className="block text-[10px] font-black uppercase text-slate-400 mb-1">CFOP (referência)</span><input value={active.cfop || ''} onChange={event => update('cfop', event.target.value)} className="w-full rounded-xl bg-slate-50 px-3 py-2 text-sm font-bold" /></label>
+                <label><span className="block text-[10px] font-black uppercase text-slate-400 mb-1">CST ICMS (referência)</span><input value={active.cstIcms || ''} onChange={event => update('cstIcms', event.target.value)} className="w-full rounded-xl bg-slate-50 px-3 py-2 text-sm font-bold" /></label>
+              </div>
+
+              <div className="grid md:grid-cols-3 gap-4">
+                {([
+                  { label: 'IPI', flag: null, value: 'ipiValue', rate: 'ipiRate', treatment: 'ipiTreatment' },
+                  { label: 'ICMS-ST', flag: 'hasIcmsSt', value: 'stValue', rate: 'stRate', treatment: 'stTreatment' },
+                  { label: 'FCP', flag: 'hasFcp', value: 'fcpValue', rate: 'fcpRate', treatment: 'fcpTreatment' },
+                  { label: 'DIFAL', flag: 'hasDifal', value: 'difalValue', rate: 'difalRate', treatment: 'difalTreatment' },
+                ] as const).map(tax => <div key={tax.label} className="p-4 rounded-2xl bg-slate-50"><div className="flex items-center justify-between mb-3"><span className="font-black text-sm">{tax.label}</span>{tax.flag && <input type="checkbox" checked={Boolean(active[tax.flag])} onChange={event => update(tax.flag, event.target.checked)} />}</div><div className="grid grid-cols-2 gap-2"><NumberField label="Alíquota" value={active[tax.rate]} onChange={value => update(tax.rate, value)} suffix="%" /><NumberField label="Valor unit." value={active[tax.value]} onChange={value => update(tax.value, value)} /></div><select value={active[tax.treatment] || 'ADDITIONAL'} onChange={event => update(tax.treatment, event.target.value as CostTreatment)} className="w-full rounded-xl bg-white p-2 mt-3 text-xs font-bold"><option value="ADDITIONAL">Adicional ao preço</option><option value="INCLUDED">Já incluído no preço</option></select></div>)}
+              </div>
+
+              <div className="grid md:grid-cols-4 gap-3 p-4 bg-violet-50 rounded-2xl"><p className="md:col-span-4 text-xs font-bold text-violet-700">Ajuste opcional por cotação — premissa comercial (%)</p>{(['Icms', 'Ipi', 'Pis', 'Cofins'] as const).map(tax => <div key={tax}><NumberField label={tax} value={active[`utilization${tax}`]} onChange={value => update(`utilization${tax}`, value)} suffix="%" /></div>)}</div>
+
+              <div className="flex flex-wrap justify-between gap-3 pt-2"><button onClick={() => selectWinner(activeIndex)} className={`px-5 py-3 rounded-xl text-xs font-black ${active.isSelected ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{active.isSelected ? 'Fornecedor escolhido' : 'Escolher este fornecedor'}</button><div className="flex gap-3"><button disabled={saving} onClick={saveQuotes} className="px-5 py-3 rounded-xl bg-blue-600 text-white text-xs font-black flex items-center gap-2 disabled:opacity-60"><Save className="w-4 h-4" />Salvar e calcular</button><button disabled={!winner || saving} onClick={() => { setNegotiatedPrice(String(winner?.price || '')); setShowPurchase(true); }} className="px-5 py-3 rounded-xl bg-slate-900 text-white text-xs font-black disabled:opacity-40">Concluir compra</button></div></div>
+              {message && <p className="text-sm font-bold text-blue-700 bg-blue-50 p-3 rounded-xl">{message}</p>}
+            </div>}
+          </div>
+        </section>
       )}
 
-      {/* 3. MODAL DE RESUMO DE SAVING */}
-      {showSavingModal && selectedReq && winner && (
-         <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md animate-in fade-in duration-500">
-            <div className="bg-white w-full max-w-2xl rounded-[4rem] shadow-2xl p-12 lg:p-16 animate-in zoom-in-95 duration-500 border border-white/20">
-               <div className="flex justify-between items-start mb-12">
-                  <div><p className="text-[10px] font-black text-blue-600 uppercase tracking-[0.3em] mb-2">Finalização Estratégica</p><h3 className="text-4xl font-black text-slate-900 tracking-tighter uppercase">Resumo de Saving</h3></div>
-                  <div className="p-6 bg-emerald-50 rounded-[2.5rem] border border-emerald-100"><PieChart className="w-10 h-10 text-emerald-600" /></div>
-               </div>
-               <div className="space-y-8">
-                  <div className="flex items-center gap-6 p-8 bg-slate-50 rounded-[3rem] border border-slate-100 shadow-inner">
-                     <div className="w-16 h-16 bg-white rounded-[1.5rem] flex items-center justify-center text-blue-600 font-black text-xl shadow-lg border border-slate-50">1</div>
-                     <div><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Parceiro Eleito</p><p className="text-2xl font-black text-slate-800 tracking-tight">{winner.supplierName}</p></div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-8">
-                     <div className="p-8 bg-slate-50 rounded-[3rem] border border-slate-100 text-center shadow-inner"><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Melhor Oferta</p><p className="text-3xl font-black text-slate-700 tracking-tighter">{formatCurrency(winner.price)}</p></div>
-                     <CurrencyInput label="Negociado Final" value={negotiatedPrice} onChange={(v) => setNegotiatedPrice(v)} color="emerald" />
-                  </div>
-                  <div className="bg-emerald-600 p-10 rounded-[3.5rem] text-white flex flex-col gap-3 relative overflow-hidden shadow-2xl shadow-emerald-200 border-b-8 border-emerald-700">
-                     <div className="flex justify-between items-center"><p className="text-[10px] font-black uppercase opacity-70 tracking-[0.3em]">Saving Comercial Absoluto</p><span className="bg-white/20 px-3 py-1 rounded-full text-[10px] font-black">-{Math.round(((winner.price - negotiatedPrice) / winner.price) * 100) || 0}%</span></div>
-                     <p className="text-5xl font-black tracking-tighter">{formatCurrency((winner.price - negotiatedPrice) * selectedReq.quantity)}</p>
-                  </div>
-               </div>
-               <div className="mt-14 flex gap-6">
-                  <button onClick={() => setShowSavingModal(false)} className="flex-1 py-6 bg-slate-100 text-slate-500 font-black text-xs rounded-[2rem] uppercase tracking-widest hover:bg-slate-200 transition-all">Revisar</button>
-                  <button onClick={() => { onUpdateStatus(selectedReq.id, 'Comprado', negotiatedPrice, winner.paymentTerms); setShowSavingModal(false); setSelectedReqId(null); }} className="flex-[2] py-6 bg-emerald-600 text-white font-black text-xs rounded-[2rem] uppercase tracking-widest flex items-center justify-center gap-3 transition-all shadow-xl shadow-emerald-200 hover:scale-[1.02] active:scale-95"><CheckCircle2 className="w-6 h-6" /> Confirmar e Finalizar</button>
-               </div>
-            </div>
-         </div>
-      )}
+      {showPurchase && selected && winner && <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4"><div className="bg-white rounded-[2rem] p-7 max-w-md w-full"><div className="flex justify-between"><div><h3 className="text-xl font-black">Confirmar compra</h3><p className="text-sm text-slate-400">A cotação original será preservada.</p></div><button onClick={() => setShowPurchase(false)}><X className="w-5 h-5" /></button></div><div className="mt-6"><NumberField label="Valor unitário negociado" value={Number(negotiatedPrice)} onChange={value => setNegotiatedPrice(String(value ?? ''))} /><p className="mt-3 text-xs text-slate-500">Saving: {money(Math.max(0, winner.price - Number(negotiatedPrice || winner.price)) * selected.quantity)}</p></div><div className="mt-6 flex gap-3"><button onClick={() => setShowPurchase(false)} className="flex-1 p-3 bg-slate-100 rounded-xl font-bold text-xs">Cancelar</button><button onClick={finishPurchase} disabled={saving} className="flex-1 p-3 bg-blue-600 text-white rounded-xl font-bold text-xs">Confirmar</button></div></div></div>}
     </div>
   );
 };

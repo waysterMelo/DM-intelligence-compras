@@ -1,22 +1,40 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ItemUseType, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma.service';
-import { TaxCreditService, TaxContext } from '../tax-engine/tax-credit.service';
-import { ItemUseType } from '@prisma/client';
+import { TcoService } from '../tco/tco.service';
+import { NfeXmlService } from './nfe-xml.service';
 
 @Injectable()
 export class RequisitionsService {
   constructor(
-    private prisma: PrismaService,
-    private taxCreditService: TaxCreditService
+    private readonly prisma: PrismaService,
+    private readonly tcoService: TcoService,
+    private readonly nfeXmlService: NfeXmlService,
   ) {}
 
-  // Busca todas as requisições ordenadas por data
+  private nonNegative(value: unknown, fallback = 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? Math.max(0, parsed) : fallback;
+  }
+
+  private optionalNumber(value: unknown) {
+    if (value === undefined || value === null || value === '') return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? Math.max(0, parsed) : null;
+  }
+
+  private round(value: number) {
+    return Math.round((value + Number.EPSILON) * 100) / 100;
+  }
+
   async findAll() {
     const requisitions = await this.prisma.requisition.findMany({
-      include: { quotes: { include: { fornecedor: true } } },
-      orderBy: { requestDate: 'desc' }
+      include: {
+        quotes: { include: { fornecedor: true } },
+        purchaseInvoice: true,
+      },
+      orderBy: { requestDate: 'desc' },
     });
-
     return requisitions.map(requisition => ({
       ...requisition,
       quotes: requisition.quotes.map(quote => ({
@@ -32,13 +50,12 @@ export class RequisitionsService {
     const supplierId = String(data.supplierId || '').trim();
     const quantity = Number(data.quantity);
     const unitPrice = Number(data.unitPrice);
-    const freight = Number(data.freight || 0);
-
+    const freight = this.nonNegative(data.freight);
     if (!name || !supplierId || !Number.isFinite(quantity) || quantity <= 0) {
       throw new BadRequestException('Item, fornecedor e quantidade positiva são obrigatórios.');
     }
-    if (!Number.isFinite(unitPrice) || unitPrice < 0 || !Number.isFinite(freight) || freight < 0) {
-      throw new BadRequestException('Preço e frete devem ser valores positivos.');
+    if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+      throw new BadRequestException('Preço deve ser um valor positivo.');
     }
 
     const supplier = await this.prisma.fornecedor.findFirst({
@@ -46,9 +63,8 @@ export class RequisitionsService {
     });
     if (!supplier) throw new NotFoundException('Fornecedor ativo não encontrado.');
 
-    // finalCost é unitário em todo o sistema; o frete total é rateado para que
-    // dashboards não multipliquem um total de pedido pela quantidade novamente.
-    const finalUnitCost = unitPrice + (freight / quantity);
+    const grossTotalCost = this.round(unitPrice * quantity + freight);
+    const finalUnitCost = this.round(grossTotalCost / quantity);
     return this.prisma.requisition.create({
       data: {
         name,
@@ -63,7 +79,7 @@ export class RequisitionsService {
         notes: String(data.notes || '').trim() || null,
         status: 'Comprado',
         purchaseMode: 'QUICK',
-        taxStatus: 'PENDING_INVOICE',
+        costReconciliationStatus: 'PENDING_INVOICE',
         quotes: {
           create: {
             fornecedorId: supplier.id,
@@ -73,47 +89,39 @@ export class RequisitionsService {
             paymentTerms: String(data.paymentTerms || '').trim(),
             isSelected: true,
             itemUseType: 'CONSUMPTION',
-            creditSource: 'PENDING_INVOICE',
-            netCost: null,
+            creditSource: 'SUPPLIER_QUOTE',
+            grossTotalCost,
+            estimatedCreditTotal: 0,
+            estimatedNetTotal: grossTotalCost,
+            netCost: finalUnitCost,
+            dataCompleteness: 'INCOMPLETE',
+            calculationSource: 'SUPPLIER_QUOTE',
+            tcoMemory: { purpose: 'QUICK_PURCHASE', missingFields: ['dados tributários da cotação'] },
           },
         },
       },
-      include: { quotes: { include: { fornecedor: true } } },
+      include: { quotes: { include: { fornecedor: true } }, purchaseInvoice: true },
     });
   }
 
-  // Lógica de "Captura Inteligente" (Bulk Import)
   async bulkImportFromText(text: string, department: string) {
-    const lines = text.split('\n').filter(line => line.trim());
-    const unitPattern = /^(x|un|unid|pç|pc|cx|caixa|kg|kilo|g|gr|mg|lt|l|ml|m|mt|mts|cm|mm|rolo|pct|pacote|saco|saca|lata|par|kit|jogo|sc|br|fardo|galão|gl|vidro|bisnaga|tb|tubo|fr|frasco|bd|balde)$/i;
-
-    const newItems = lines.map(line => {
+    const unitPattern = /^(x|un|unid|pç|pc|cx|caixa|kg|g|gr|mg|lt|l|ml|m|mt|mts|cm|mm|rolo|pct|pacote|saco|lata|par|kit|jogo|fardo|galão|tubo|frasco|balde)$/i;
+    const items = text.split('\n').filter(line => line.trim()).map(line => {
       let name = line.trim();
       let quantity = 1;
       let unit = 'un';
-
-      const qtyMatch = name.match(/^(\d+)(.*)$/);
-      if (qtyMatch) {
-          quantity = parseInt(qtyMatch[1], 10);
-          const rest = qtyMatch[2].trim();
-          const firstWordMatch = rest.match(/^([a-zA-ZçÇãõÃÕáéíóúÁÉÍÓÚ]+|[xX*])\.?(\s+(.*))?$/);
-          if (firstWordMatch) {
-              const potentialUnit = firstWordMatch[1];
-              if (unitPattern.test(potentialUnit)) {
-                  unit = ['x', 'X', '*'].includes(potentialUnit) ? 'un' : potentialUnit.toLowerCase();
-                  name = (firstWordMatch[3] || "").trim();
-              } else {
-                  name = rest;
-              }
-          } else {
-              name = rest;
-          }
+      const match = name.match(/^(\d+(?:[.,]\d+)?)\s*([^\s]*)\s*(.*)$/);
+      if (match) {
+        quantity = Number(match[1].replace(',', '.')) || 1;
+        if (unitPattern.test(match[2])) {
+          unit = ['x', '*'].includes(match[2].toLowerCase()) ? 'un' : match[2].toLowerCase();
+          name = match[3];
+        } else {
+          name = `${match[2]} ${match[3]}`;
+        }
       }
-      
-      name = name.replace(/^(de\s+|-\s+|\.\s+)/i, '').trim() || "Item sem descrição";
-
       return {
-        name,
+        name: name.replace(/^(de\s+|-\s+|\.\s+)/i, '').trim() || 'Item sem descrição',
         quantity,
         unit,
         department,
@@ -122,185 +130,230 @@ export class RequisitionsService {
         status: 'Solicitado',
       };
     });
-
-    return Promise.all(newItems.map(item => this.prisma.requisition.create({ data: item })));
+    return Promise.all(items.map(item => this.prisma.requisition.create({ data: item })));
   }
 
-  // Atualiza o Mapa de Cotação da Requisição com Inteligência Fiscal (Motor de Créditos)
   async updateQuotes(id: string, quotes: any[]) {
-    const buyer = await this.prisma.fornecedor.findFirst({
-      where: { companyRole: 'BUYER' },
-      include: { taxConfig: true },
-    });
-    const requisition = await this.prisma.requisition.findUnique({ where: { id } });
-    if (!buyer || !requisition) {
-      throw new NotFoundException('Comprador ou requisição não encontrados.');
+    const requisition = await this.prisma.requisition.findUnique({ where: { id }, include: { purchaseInvoice: true } });
+    if (!requisition) throw new NotFoundException('Requisição não encontrada.');
+    if (requisition.purchaseInvoice) throw new ConflictException('A cotação original não pode ser alterada após o recebimento da NF.');
+    if (!Array.isArray(quotes) || quotes.length === 0) {
+      throw new BadRequestException('Informe ao menos uma cotação.');
     }
+    const selectedIndexes = quotes.map((quote, index) => quote.isSelected ? index : -1).filter(index => index >= 0);
+    if (selectedIndexes.length > 1) throw new BadRequestException('Apenas um fornecedor pode ser o vencedor.');
 
-    const utilizationConfig = {
-      icms: buyer.taxConfig?.icmsCreditPercentage ?? 100,
-      pis: buyer.taxConfig?.pisCreditPercentage ?? 100,
-      cofins: buyer.taxConfig?.cofinsCreditPercentage ?? 100,
-      ipi: buyer.taxConfig?.ipiCreditPercentage ?? 100,
-    };
-
-    // Calcula e valida antes de apagar. Uma cotação inválida não pode destruir
-    // o mapa de fornecedores que já estava persistido.
-    const processedQuotes = await Promise.all(quotes.map(async q => {
-      const currentItemUseType = q.itemUseType || requisition.itemUseType || 'CONSUMPTION';
-      const common = {
-        supplierName: q.supplierName || 'Fornecedor avulso',
-        price: Math.max(0, Number(q.price) || 0),
-        freight: Math.max(0, Number(q.freight) || 0),
-        leadTime: Math.max(0, Number(q.leadTime) || 0),
-        paymentTerms: q.paymentTerms || '',
-        isSelected: Boolean(q.isSelected),
-        itemUseType: currentItemUseType as ItemUseType,
-        ipiRate: q.ipiRate || 0,
-        ipiValue: q.ipiValue,
-        icmsRate: q.icmsRate || 0,
-        icmsValue: q.icmsValue,
-        pisRate: q.pisRate || 0,
-        pisValue: q.pisValue,
-        cofinsRate: q.cofinsRate || 0,
-        cofinsValue: q.cofinsValue,
-        cbsRate: q.cbsRate || 0,
-        cbsValue: q.cbsValue || 0,
-        ibsRate: q.ibsRate || 0,
-        ibsValue: q.ibsValue || 0,
-        cstIcms: q.cstIcms,
-        csosn: q.csosn,
-        cstPis: q.cstPis,
-        cstCofins: q.cstCofins,
-        cstIbsCbs: q.cstIbsCbs,
-        taxClassCode: q.taxClassCode,
+    const processedQuotes = await Promise.all(quotes.map(async quote => {
+      const companyId = String(quote.companyId || '').trim() || null;
+      const supplier = companyId
+        ? await this.prisma.fornecedor.findFirst({ where: { id: companyId, companyRole: 'SUPPLIER', isActive: true } })
+        : null;
+      if (companyId && !supplier) throw new NotFoundException('Fornecedor ativo não encontrado.');
+      const itemUseType = (quote.itemUseType || requisition.itemUseType || 'CONSUMPTION') as ItemUseType;
+      const input = {
+        ...quote,
+        companyId: companyId || undefined,
+        supplierName: supplier?.name || quote.supplierName,
+        itemUseType,
+        quantity: requisition.quantity,
+        price: this.nonNegative(quote.price),
+        freight: this.nonNegative(quote.freight),
       };
-
-      if (!q.companyId) {
-        return {
-          ...common,
-          creditSource: q.creditSource || 'MANUAL',
-          netCost: common.price + (common.freight / (requisition.quantity || 1)) + (common.ipiValue ?? common.price * (common.ipiRate / 100)),
-        };
-      }
-
-      const supplier = await this.prisma.fornecedor.findUnique({ where: { id: q.companyId } });
-      if (!supplier) throw new NotFoundException('Fornecedor não encontrado.');
-
-      const hasManualUtilization = !['NF', 'PENDING_INVOICE'].includes(q.creditSource) &&
-        [q.utilizationIcms, q.utilizationPis, q.utilizationCofins, q.utilizationIpi]
-          .some(value => value !== undefined && value !== null);
-      const manualUtilization = hasManualUtilization ? {
-        icms: q.utilizationIcms,
-        pis: q.utilizationPis,
-        cofins: q.utilizationCofins,
-        ipi: q.utilizationIpi,
-      } : undefined;
-
-      const taxCtx: TaxContext = {
-        buyerRegime: buyer.taxRegime,
-        supplierRegime: supplier.taxRegime,
-        itemUseType: currentItemUseType,
-        price: common.price,
-        quantity: requisition.quantity || 1,
-        freight: common.freight,
-        ipiRate: common.ipiRate,
-        ipiValue: common.ipiValue,
-        icmsRate: common.icmsRate,
-        icmsValue: common.icmsValue,
-        pisRate: common.pisRate,
-        pisValue: common.pisValue,
-        cofinsRate: common.cofinsRate,
-        cofinsValue: common.cofinsValue,
-        cbsRate: common.cbsRate,
-        cbsValue: common.cbsValue,
-        ibsRate: common.ibsRate,
-        ibsValue: common.ibsValue,
-        cstIcms: common.cstIcms,
-        csosn: common.csosn,
-        cstPis: common.cstPis,
-        cstCofins: common.cstCofins,
-        manualUtilization,
-        utilizationConfig,
-      };
-      const taxResult = this.taxCreditService.calculate(taxCtx);
+      const result = await this.tcoService.preview(input);
 
       return {
-        ...common,
-        fornecedorId: supplier.id,
-        supplierName: supplier.name,
-        utilizationIcms: manualUtilization?.icms ?? taxResult.taxMemory.finalUtilization.icms,
-        utilizationPis: manualUtilization?.pis ?? taxResult.taxMemory.finalUtilization.pis,
-        utilizationCofins: manualUtilization?.cofins ?? taxResult.taxMemory.finalUtilization.cofins,
-        utilizationIpi: manualUtilization?.ipi ?? taxResult.taxMemory.finalUtilization.ipi,
-        creditIcms: taxResult.creditIcms,
-        creditPis: taxResult.creditPis,
-        creditCofins: taxResult.creditCofins,
-        creditIpi: taxResult.creditIpi,
-        netCost: taxResult.netCost,
-        creditSource: q.creditSource || 'NF',
-        taxMemory: taxResult.taxMemory as any,
+        fornecedorId: companyId,
+        supplierName: supplier?.name || String(quote.supplierName || 'Fornecedor não informado'),
+        price: input.price,
+        freight: input.freight,
+        leadTime: Math.floor(this.nonNegative(quote.leadTime)),
+        paymentTerms: String(quote.paymentTerms || ''),
+        isSelected: Boolean(quote.isSelected),
+        itemUseType,
+        ncm: String(quote.ncm || '').trim() || null,
+        cest: String(quote.cest || '').trim() || null,
+        cfop: String(quote.cfop || '').trim() || null,
+        cstIcms: String(quote.cstIcms || '').trim() || null,
+        csosn: String(quote.csosn || '').trim() || null,
+        cstPis: String(quote.cstPis || '').trim() || null,
+        cstCofins: String(quote.cstCofins || '').trim() || null,
+        hasIcmsSt: Boolean(quote.hasIcmsSt),
+        hasFcp: Boolean(quote.hasFcp),
+        hasDifal: Boolean(quote.hasDifal),
+        icmsRate: this.optionalNumber(quote.icmsRate), icmsValue: this.optionalNumber(quote.icmsValue),
+        ipiRate: this.optionalNumber(quote.ipiRate), ipiValue: this.optionalNumber(quote.ipiValue),
+        pisRate: this.optionalNumber(quote.pisRate), pisValue: this.optionalNumber(quote.pisValue),
+        cofinsRate: this.optionalNumber(quote.cofinsRate), cofinsValue: this.optionalNumber(quote.cofinsValue),
+        stRate: this.optionalNumber(quote.stRate), stValue: this.optionalNumber(quote.stValue),
+        fcpRate: this.optionalNumber(quote.fcpRate), fcpValue: this.optionalNumber(quote.fcpValue),
+        difalRate: this.optionalNumber(quote.difalRate), difalValue: this.optionalNumber(quote.difalValue),
+        ipiTreatment: quote.ipiTreatment === 'INCLUDED' ? 'INCLUDED' : 'ADDITIONAL',
+        stTreatment: quote.stTreatment === 'INCLUDED' ? 'INCLUDED' : 'ADDITIONAL',
+        fcpTreatment: quote.fcpTreatment === 'INCLUDED' ? 'INCLUDED' : 'ADDITIONAL',
+        difalTreatment: quote.difalTreatment === 'INCLUDED' ? 'INCLUDED' : 'ADDITIONAL',
+        utilizationIcms: result.recovery.icms,
+        utilizationIpi: result.recovery.ipi,
+        utilizationPis: result.recovery.pis,
+        utilizationCofins: result.recovery.cofins,
+        creditIcms: result.credits.icms,
+        creditIpi: result.credits.ipi,
+        creditPis: result.credits.pis,
+        creditCofins: result.credits.cofins,
+        netCost: result.netCost,
+        creditSource: 'SUPPLIER_QUOTE',
+        grossTotalCost: result.grossTotalCost,
+        estimatedCreditTotal: result.estimatedCreditTotal,
+        estimatedNetTotal: result.estimatedNetTotal,
+        dataCompleteness: result.dataCompleteness,
+        calculationSource: result.calculationSource,
+        tcoMemory: result.tcoMemory as Prisma.InputJsonValue,
       };
     }));
 
-    return this.prisma.$transaction(async tx => {
-      await tx.quote.deleteMany({ where: { requisitionId: id } });
-      return tx.requisition.update({
+    return this.prisma.$transaction(async transaction => {
+      await transaction.quote.deleteMany({ where: { requisitionId: id } });
+      return transaction.requisition.update({
         where: { id },
         data: {
           itemUseType: processedQuotes[0]?.itemUseType,
           quotes: { create: processedQuotes },
         },
-        include: { quotes: { include: { fornecedor: true } } },
+        include: { quotes: { include: { fornecedor: true } }, purchaseInvoice: true },
       });
     });
   }
 
-  async finalizeQuickPurchaseTax(id: string, data: any) {
+  private async getInvoiceContext(id: string) {
     const requisition = await this.prisma.requisition.findUnique({
       where: { id },
-      include: { quotes: true },
+      include: { quotes: { include: { fornecedor: true } }, purchaseInvoice: true },
     });
-    if (!requisition || requisition.purchaseMode !== 'QUICK') {
-      throw new NotFoundException('Compra rápida não encontrada.');
-    }
+    if (!requisition) throw new NotFoundException('Requisição não encontrada.');
+    if (requisition.purchaseInvoice) throw new ConflictException('Esta requisição já possui uma NF vinculada.');
+    const winner = requisition.quotes.find(quote => quote.isSelected) || requisition.quotes.find(quote => quote.fornecedorId);
+    if (!winner?.fornecedor) throw new BadRequestException('Defina o fornecedor vencedor antes de registrar a NF.');
+    return { requisition, winner };
+  }
 
-    const invoiceNumber = String(data.invoiceNumber || '').trim();
-    const invoiceAccessKey = String(data.invoiceAccessKey || '').replace(/\D/g, '');
-    const invoiceIssueDate = new Date(data.invoiceIssueDate);
-    if (!invoiceNumber || Number.isNaN(invoiceIssueDate.getTime())) {
-      throw new BadRequestException('Número e data de emissão da nota são obrigatórios.');
+  private async createInvoice(id: string, data: any, importSource: 'MANUAL' | 'XML') {
+    const { requisition, winner } = await this.getInvoiceContext(id);
+    const accessKey = String(data.accessKey || '').replace(/\D/g, '');
+    const supplierCnpj = String(data.supplierCnpj || '').replace(/\D/g, '');
+    const issueDate = new Date(data.issueDate);
+    if (!this.nfeXmlService.validateAccessKey(accessKey)) throw new BadRequestException('A chave da NF-e é inválida.');
+    if (supplierCnpj !== winner.fornecedor!.cnpj.replace(/\D/g, '')) {
+      throw new BadRequestException('O CNPJ da NF-e não corresponde ao fornecedor vencedor.');
     }
-    if (invoiceAccessKey && invoiceAccessKey.length !== 44) {
-      throw new BadRequestException('A chave de acesso da NF-e deve ter 44 dígitos.');
+    if (!String(data.number || '').trim() || Number.isNaN(issueDate.getTime())) {
+      throw new BadRequestException('Número e data de emissão da NF são obrigatórios.');
     }
+    const grossTotal = this.nonNegative(data.grossTotal);
+    if (grossTotal <= 0) throw new BadRequestException('O total da NF deve ser maior que zero.');
 
-    const originalQuote = requisition.quotes.find(quote => quote.isSelected) || requisition.quotes[0];
-    if (!originalQuote?.fornecedorId) {
-      throw new BadRequestException('A compra não possui fornecedor cadastrado.');
-    }
-    await this.updateQuotes(id, [{
-      ...originalQuote,
-      ...data.quote,
-      companyId: originalQuote.fornecedorId,
-      supplierName: originalQuote.supplierName,
-      price: originalQuote.price,
-      freight: originalQuote.freight,
-      paymentTerms: originalQuote.paymentTerms,
-      isSelected: true,
-      creditSource: 'NF',
-    }]);
+    const totals = {
+      grossTotal,
+      icmsTotal: this.nonNegative(data.icmsTotal),
+      ipiTotal: this.nonNegative(data.ipiTotal),
+      pisTotal: this.nonNegative(data.pisTotal),
+      cofinsTotal: this.nonNegative(data.cofinsTotal),
+    };
+    const assumptions = await this.tcoService.getAssumptions(requisition.itemUseType);
+    const actual = this.tcoService.calculateInvoiceEstimate(totals, assumptions);
+    const quotedGrossTotal = winner.grossTotalCost ?? this.round(winner.price * requisition.quantity + (winner.freight || 0));
+    const quotedNetEstimatedTotal = winner.estimatedNetTotal ?? quotedGrossTotal;
+    const quotedFreightTotal = winner.freight || 0;
+    const memory = (winner.tcoMemory || {}) as Record<string, any>;
+    const resolved = memory.resolvedTaxes || {};
+    const quotedTaxTotal = this.round(['icms', 'ipi', 'pis', 'cofins', 'st', 'fcp', 'difal']
+      .reduce((sum, tax) => sum + this.nonNegative(resolved[tax]?.amount), 0) * requisition.quantity);
+    const actualTaxTotal = this.round(
+      totals.icmsTotal + totals.ipiTotal + totals.pisTotal + totals.cofinsTotal +
+      this.nonNegative(data.stTotal) + this.nonNegative(data.fcpTotal) + this.nonNegative(data.difalTotal),
+    );
+    const freightVariance = this.round(this.nonNegative(data.freightTotal) - quotedFreightTotal);
+    const taxVariance = this.round(actualTaxTotal - quotedTaxTotal);
+    const grossVariance = this.round(grossTotal - quotedGrossTotal);
+    const netVariance = this.round(actual.actualNetEstimatedTotal - quotedNetEstimatedTotal);
+    const hasDivergence = Math.abs(grossVariance) > 0.01 || Math.abs(netVariance) > 0.01;
 
+    try {
+      return await this.prisma.$transaction(async transaction => {
+        const invoice = await transaction.purchaseInvoice.create({
+          data: {
+            requisitionId: id,
+            number: String(data.number).trim(),
+            series: String(data.series || '').trim() || null,
+            accessKey,
+            issueDate,
+            supplierCnpj,
+            importSource,
+            productTotal: this.nonNegative(data.productTotal),
+            freightTotal: this.nonNegative(data.freightTotal),
+            discountTotal: this.nonNegative(data.discountTotal),
+            grossTotal,
+            icmsTotal: totals.icmsTotal,
+            ipiTotal: totals.ipiTotal,
+            pisTotal: totals.pisTotal,
+            cofinsTotal: totals.cofinsTotal,
+            stTotal: this.nonNegative(data.stTotal),
+            fcpTotal: this.nonNegative(data.fcpTotal),
+            difalTotal: this.nonNegative(data.difalTotal),
+            cbsTotal: this.nonNegative(data.cbsTotal),
+            ibsTotal: this.nonNegative(data.ibsTotal),
+            estimatedRecoverableTotal: actual.estimatedRecoverableTotal,
+            actualNetEstimatedTotal: actual.actualNetEstimatedTotal,
+            quotedGrossTotal,
+            quotedNetEstimatedTotal,
+            quotedFreightTotal,
+            quotedTaxTotal,
+            actualTaxTotal,
+            freightVariance,
+            taxVariance,
+            grossVariance,
+            netVariance,
+            xmlContent: data.xmlContent || null,
+          },
+        });
+        await transaction.requisition.update({
+          where: { id },
+          data: {
+            costReconciliationStatus: hasDivergence ? 'DIVERGENCE_FOUND' : 'INVOICE_RECEIVED',
+          },
+        });
+        return invoice;
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('Esta chave de NF-e já foi importada.');
+      }
+      throw error;
+    }
+  }
+
+  createManualInvoice(id: string, data: any) {
+    return this.createInvoice(id, data, 'MANUAL');
+  }
+
+  createXmlInvoice(id: string, file: any) {
+    if (!file?.buffer) throw new BadRequestException('Selecione o arquivo XML da NF-e.');
+    const parsed = this.nfeXmlService.parse(file.buffer);
+    return this.createInvoice(id, parsed, 'XML');
+  }
+
+  async reconcileInvoice(id: string, data: { acceptDivergence?: boolean }) {
+    const requisition = await this.prisma.requisition.findUnique({
+      where: { id }, include: { purchaseInvoice: true },
+    });
+    if (!requisition?.purchaseInvoice) throw new NotFoundException('NF não encontrada para esta requisição.');
+    const diverged = Math.abs(requisition.purchaseInvoice.grossVariance) > 0.01 ||
+      Math.abs(requisition.purchaseInvoice.netVariance) > 0.01;
+    if (diverged && data.acceptDivergence !== true) {
+      throw new BadRequestException('Confirme explicitamente que a divergência comercial foi aceita.');
+    }
     return this.prisma.requisition.update({
       where: { id },
-      data: {
-        taxStatus: 'CALCULATED',
-        invoiceNumber,
-        invoiceAccessKey: invoiceAccessKey || null,
-        invoiceIssueDate,
-        taxReviewedAt: new Date(),
-      },
-      include: { quotes: { include: { fornecedor: true } } },
+      data: { costReconciliationStatus: 'COST_CONFIRMED', costReconciledAt: new Date() },
+      include: { purchaseInvoice: true, quotes: { include: { fornecedor: true } } },
     });
   }
 
@@ -311,12 +364,13 @@ export class RequisitionsService {
         status: data.status,
         finalCost: data.finalCost,
         paymentTerms: data.paymentTerms,
-        deliveryDate: data.status === 'Entregue' ? new Date() : undefined
-      }
+        deliveryDate: data.status === 'Entregue' ? new Date() : undefined,
+        costReconciliationStatus: data.status === 'Comprado' ? 'PENDING_INVOICE' : undefined,
+      },
     });
   }
 
-  async delete(id: string) {
+  delete(id: string) {
     return this.prisma.requisition.delete({ where: { id } });
   }
 }

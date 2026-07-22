@@ -39,6 +39,16 @@ export class CompaniesController {
     return this.companiesService.updateTaxConfig(data);
   }
 
+  @Get('tco-assumptions')
+  getTcoAssumptions() {
+    return this.companiesService.getTcoAssumptions();
+  }
+
+  @Patch('tco-assumptions')
+  updateTcoAssumptions(@Body() data: any[]) {
+    return this.companiesService.updateTcoAssumptions(data);
+  }
+
   // Rota PATCH /companies/:id -> Atualiza dados da empresa
   @Patch(':id')
   async update(@Param('id') id: string, @Body() data: any) {

@@ -270,7 +270,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
             <div className="absolute bottom-10 -right-4 glass-panel p-5 rounded-2xl w-72 animate-float-delayed shadow-2xl z-30">
               <div className="flex items-center gap-3 mb-4 border-b border-white/5 pb-4">
                 <div className="w-8 h-8 rounded-lg bg-indigo-500/10 flex items-center justify-center border border-indigo-500/20"><Cpu className="w-4 h-4 text-indigo-400" /></div>
-                <div><h4 className="text-sm font-bold text-white">Cálculo de TCO</h4><p className="text-[10px] text-slate-400">Motor de Impostos (IPI/ICMS/PIS)</p></div>
+                <div><h4 className="text-sm font-bold text-white">Simulador de TCO</h4><p className="text-[10px] text-slate-400">Comparação comercial de custos</p></div>
               </div>
               <div className="space-y-3">
                 <div className="flex justify-between items-center text-xs"><span className="text-slate-400">Precisão Algorítmica</span><span className="text-white font-mono">99.9%</span></div>
@@ -281,7 +281,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
 
           <div className="z-20">
             <h2 className="text-4xl font-black text-white leading-tight mb-4 tracking-tight">A engenharia de dados <br/><span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-indigo-400">aplicada aos suprimentos.</span></h2>
-            <p className="text-slate-400 font-medium max-w-md leading-relaxed text-sm">Desenvolvido pela Dimelonari Group. Transformamos processos de compras complexos em decisões exatas através de inteligência fiscal.</p>
+            <p className="text-slate-400 font-medium max-w-md leading-relaxed text-sm">Desenvolvido pela Dimelonari Group. Transformamos processos de compras complexos em decisões comerciais comparáveis e rastreáveis.</p>
           </div>
         </div>
 
